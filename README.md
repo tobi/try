@@ -1,6 +1,6 @@
-# try - fzf for your ADHD projects
+# try something new
 
-> For everyone who constantly creates new projects for little experiments, a one-file Ruby script to quickly manage and navigate to them.
+> For everyone who constantly creates new projects for little experiments, a one-file Ruby script to quickly manage and navigate to keep them somewhat organized
 
 Ever find yourself with 50 directories named `test`, `test2`, `new-test`, `actually-working-test`, scattered across your filesystem? Or worse, just coding in `/tmp` and losing everything?
 
@@ -19,18 +19,10 @@ Instantly navigate through all your experiment directories with:
 ## Quick Start
 
 ```bash
-# Option 1: Download from the latest GitHub Release (recommended)
-# Open the latest release page and download `try.rb`:
-#   https://github.com/<owner>/<repo>/releases/latest
-
-
 curl -sL https://raw.githubusercontent.com/tobi/try/refs/heads/main/try.rb > ~/.local/try.rb
+
 # Add to your shell (bash/zsh)
 echo 'eval "$(~/.local/try.rb init ~/src/tries)"' >> ~/.zshrc
-
-# Start using it
-try redis     # Creates 2025-08-17-redis and jumps into it
-try           # Browse all your experiments
 ```
 
 ## The Problem
@@ -75,22 +67,6 @@ Not just substring matching - it's smart:
 - Everything lives in `~/src/tries` (configurable via `TRY_PATH`)
 - Auto-prefixes with dates: `2025-08-17-your-idea`
 - Skip the date prompt if you already typed a name
-
-## Installation
-
-### Option 1: Just grab the file
-
-```bash
-wget https://raw.githubusercontent.com/yourusername/try/main/try.rb
-chmod +x try.rb
-```
-
-### Option 2: Clone and link
-
-```bash
-git clone https://github.com/yourusername/try.git
-ln -s $(pwd)/try/try.rb /usr/local/bin/try
-```
 
 ### Shell Integration
 
