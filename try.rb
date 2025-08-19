@@ -231,7 +231,7 @@ class TrySelector
     STDERR.print "\e[2J\e[1;1H"
 
     # Use actual terminal width for separator lines
-    separator = "─" * [(@term_width - 1), 50].min
+    separator = "─" * (@term_width - 1)
 
     # Header
     STDERR.print "\e[1;36m📁 Try Directory Selection\e[0m\r\n"
@@ -601,14 +601,17 @@ if __FILE__ == $0
   elsif ARGV.include?('--init')
     # Output shell function for eval (bash/zsh compatible)
     script_path = File.expand_path($0)
-    directory = ARGV[1] || "$TRY_PATH"
+
+    env = ""
+    if path = ARGV[ARGV.index('--init') + 1]
+      env = "TRY_PATH=#{path.inspect}"
+    end
 
     # Simple approach: redirect stderr to tty, capture stdout
-    puts <<~SHELL.gsub(/\n/, '')
+    puts <<~SHELL
       try() {
-        tries_dir='#{directory}';
         script_path='#{script_path}';
-        cmd=$(TRY_PATH="$tries_dir" /usr/bin/env ruby "$script_path" "$@" 2>/dev/tty);
+        cmd=$(#{env} /usr/bin/env ruby "$script_path" "$@" 2>/dev/tty);
         [ $? -eq 0 ] && eval "$cmd" || echo $cmd;
       }
     SHELL
