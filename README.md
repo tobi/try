@@ -6,13 +6,9 @@ Ever find yourself with 50 directories named `test`, `test2`, `new-test`, `actua
 
 **try** is here for your beautifully chaotic mind.
 
-## What it does
+# What it does 
 
-```bash
-$ try
-```
-
-<!-- Demo GIF coming soon -->
+[![asciicast](https://asciinema.org/a/ve8AXBaPhkKz40YbqPTlVjqgs.svg)](https://asciinema.org/a/ve8AXBaPhkKz40YbqPTlVjqgs)
 
 Instantly navigate through all your experiment directories with:
 - **Fuzzy search** that just works
