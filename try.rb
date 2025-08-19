@@ -3,11 +3,12 @@
 require 'io/console'
 require 'time'
 require 'fileutils'
+## Removed optparse; we'll manually parse CLI args
 
 class TrySelector
   TRY_PATH = ENV['TRY_PATH'] || File.expand_path("~/src/tries")
 
-  def initialize(search_term = "")
+  def initialize(search_term = "", base_path: TRY_PATH)
     @search_term = search_term.gsub(/\s+/, '-')
     @cursor_pos = 0
     @scroll_offset = 0
@@ -16,8 +17,9 @@ class TrySelector
     @term_width = 80
     @term_height = 24
     @all_trials = nil  # Memoized trials
+    @base_path = base_path
 
-    FileUtils.mkdir_p(TRY_PATH) unless Dir.exist?(TRY_PATH)
+    FileUtils.mkdir_p(@base_path) unless Dir.exist?(@base_path)
   end
 
   def run
@@ -42,9 +44,7 @@ class TrySelector
 
   def setup_terminal
     update_terminal_size
-    STDERR.print "\e[?25l"  # Hide cursor
-    STDERR.print "\e[2J"     # Clear screen
-    STDERR.print "\e[H"      # Move to home
+    ui_print "{hide_cursor}{clear_screen}{home}"
   end
 
   def update_terminal_size
@@ -59,18 +59,18 @@ class TrySelector
 
   def restore_terminal
     # Clear screen completely before restoring
-    STDERR.print "\e[2J\e[H"
-    STDERR.print "\e[?25h"  # Show cursor
+    ui_print "{clear_screen}{home}"
+    ui_print "{show_cursor}"
   end
 
   def load_all_tries
     # Load trials only once - single pass through directory
     @all_tries ||= begin
       tries = []
-      Dir.foreach(TRY_PATH) do |entry|
+      Dir.foreach(@base_path) do |entry|
         next if entry == '.' || entry == '..'
 
-        path = File.join(TRY_PATH, entry)
+        path = File.join(@base_path, entry)
         stat = File.stat(path)
 
         # Only include directories
@@ -110,6 +110,11 @@ class TrySelector
 
   def calculate_score(text, query, ctime = nil, mtime = nil)
     score = 0.0
+
+    # generally we are looking for default date-prefixed directories
+    if text.start_with?(/\d\d\d\d\-\d\d\-\d\d\-/)
+      score += 2.0
+    end
 
     # If there's a search query, calculate match score
     if !query.empty?
@@ -228,18 +233,18 @@ class TrySelector
   def render(tries)
     # All UI output goes to STDERR
     # Clear screen and move to top-left
-    STDERR.print "\e[2J\e[1;1H"
+    ui_print "{clear_screen}{home}"
 
     # Use actual terminal width for separator lines
     separator = "─" * (@term_width - 1)
 
     # Header
-    STDERR.print "\e[1;36m📁 Try Directory Selection\e[0m\r\n"
-    STDERR.print "\e[90m#{separator}\e[0m\r\n"
+    ui_print "{bold}{cyan}📁 Try Directory Selection{reset}\r\n"
+    ui_print "{gray}#{separator}{reset}\r\n"
 
     # Search input
-    STDERR.print "\e[1;33mSearch: \e[0m#{@input_buffer}\r\n"
-    STDERR.print "\e[90m#{separator}\e[0m\r\n"
+    ui_print "{highlight}Search: {reset}#{@input_buffer}\r\n"
+    ui_print "{gray}#{separator}{reset}\r\n"
 
     # Calculate visible window based on actual terminal height
     max_visible = [@term_height - 8, 3].max
@@ -258,15 +263,15 @@ class TrySelector
     (@scroll_offset...visible_end).each do |idx|
       # Add blank line before "Create new"
       if idx == tries.length && tries.any? && idx >= @scroll_offset
-        STDERR.print "\r\n"
+        ui_print "\r\n"
       end
 
       # Print cursor/selection indicator
       is_selected = idx == @cursor_pos
       if is_selected
-        STDERR.print "\e[1;35m→ \e[0m"  # Arrow (without reverse video yet)
+        ui_print "{bold}{magenta}→ {reset}"  # Arrow (without reverse video yet)
       else
-        STDERR.print "  "
+        ui_print "  "
       end
 
       # Display try directory or "Create new" option
@@ -274,12 +279,12 @@ class TrySelector
         try_dir = tries[idx]
 
         # Render the folder icon (always outside selection)
-        STDERR.print "📁 "
+        ui_print "📁 "
 
         # Start selection highlighting after icon
         if is_selected
           # Use a subtle background color like fzf (dark gray background)
-          STDERR.print "\e[48;5;236m"  # Dark gray background
+          ui_print "{selected}", selected: true  # Dark gray background
         end
 
         # Format directory name with date styling
@@ -289,36 +294,36 @@ class TrySelector
 
           # Render the date part (faint)
           if is_selected
-            STDERR.print "\e[38;5;240m#{date_part}\e[39m"  # Darker gray text on selection
+            ui_print "\e[38;5;240m#{date_part}\e[39m"  # Darker gray text on selection
           else
-            STDERR.print "\e[90m#{date_part}\e[0m"  # Gray when not selected
+            ui_print "{gray}#{date_part}{reset}"  # Gray when not selected
           end
 
           # Render the separator (very faint)
           separator_matches = !@input_buffer.empty? && @input_buffer.include?('-')
           if separator_matches
             if is_selected
-              STDERR.print "\e[1;38;5;226m-\e[22;39m"  # Bright yellow on selection
+              ui_print "\e[1;38;5;226m-\e[22;39m"  # Bright yellow on selection
             else
-              STDERR.print "\e[1;33m-\e[0m"  # Yellow when not selected
+              ui_print "{highlight}-{reset}"  # Yellow when not selected
             end
           else
             # Make separator very faint
             if is_selected
-              STDERR.print "\e[38;5;238m-\e[39m"  # Very dark gray on selection
+              ui_print "\e[38;5;238m-\e[39m"  # Very dark gray on selection
             else
-              STDERR.print "\e[38;5;238m-\e[0m"  # Very dark gray normally
+              ui_print "\e[38;5;238m-\e[0m"  # Very dark gray normally
             end
           end
 
           # Render the name part with match highlighting
           if !@input_buffer.empty?
-            STDERR.print highlight_matches_for_selection(name_part, @input_buffer, is_selected)
+            ui_print highlight_matches_for_selection(name_part, @input_buffer, is_selected)
           else
             if is_selected
-              STDERR.print "\e[97m#{name_part}\e[39m"  # Bright white on selection
+              ui_print "\e[97m#{name_part}\e[39m"  # Bright white on selection
             else
-              STDERR.print name_part
+              ui_print name_part
             end
           end
 
@@ -327,12 +332,12 @@ class TrySelector
         else
           # No date prefix - render folder icon then content
           if !@input_buffer.empty?
-            STDERR.print highlight_matches_for_selection(try_dir[:basename], @input_buffer, is_selected)
+            ui_print highlight_matches_for_selection(try_dir[:basename], @input_buffer, is_selected)
           else
             if is_selected
-              STDERR.print "\e[97m#{try_dir[:basename]}\e[39m"  # Bright white on selection
+              ui_print "\e[97m#{try_dir[:basename]}\e[39m"  # Bright white on selection
             else
-              STDERR.print try_dir[:basename]
+              ui_print try_dir[:basename]
             end
           end
           display_text = try_dir[:basename]
@@ -352,19 +357,19 @@ class TrySelector
         padding = " " * [padding_needed, 1].max
 
         # Print padding and metadata
-        STDERR.print padding
+        ui_print padding
         if is_selected
-          STDERR.print "\e[38;5;240m #{meta_text}\e[39m"  # Dark gray on selection
+          ui_print "\e[38;5;240m #{meta_text}\e[39m"  # Dark gray on selection
         else
-          STDERR.print " \e[90m#{meta_text}\e[0m"  # Gray normally
+          ui_print " {gray}#{meta_text}{reset}"  # Gray normally
         end
 
       else
         # This is the "Create new" option
-        STDERR.print "+ "  # Plus sign outside selection
+        ui_print "+ "  # Plus sign outside selection
 
         if is_selected
-          STDERR.print "\e[48;5;236m"  # Dark gray background like other selections
+          ui_print "{selected}", selected: true  # Dark gray background like other selections
         end
 
         display_text = if @input_buffer.empty?
@@ -374,31 +379,31 @@ class TrySelector
         end
 
         if is_selected
-          STDERR.print "\e[97m#{display_text}\e[39m"  # Bright white on selection
+          ui_print "\e[97m#{display_text}\e[39m"  # Bright white on selection
         else
-          STDERR.print display_text
+          ui_print display_text
         end
 
         # Pad to full width
         text_width = display_text.length
         padding_needed = @term_width - 5 - text_width  # -5 for arrow + "+ "
-        STDERR.print " " * [padding_needed, 1].max
+        ui_print " " * [padding_needed, 1].max
       end
 
       # Reset all formatting
-      STDERR.print "\e[0m"
-      STDERR.print "\r\n"
+      ui_print "{reset}"
+      ui_print "\r\n"
     end
 
     # Scroll indicator if needed
     if total_items > max_visible
-      STDERR.print "\e[90m#{separator}\e[0m\r\n"
-      STDERR.print "\e[90m[#{@scroll_offset + 1}-#{visible_end}/#{total_items}]\e[0m\r\n"
+      ui_print "{gray}#{separator}{reset}\r\n"
+      ui_print "{gray}[#{@scroll_offset + 1}-#{visible_end}/#{total_items}]{reset}\r\n"
     end
 
     # Instructions at bottom
-    STDERR.print "\e[90m#{separator}\e[0m\r\n"
-    STDERR.print "\e[90m↑↓: Navigate  Enter: Select  ESC: Cancel\e[0m"
+    ui_print "{gray}#{separator}{reset}\r\n"
+    ui_print "{gray}↑↓: Navigate  Enter: Select  ESC: Cancel{reset}"
 
     # Flush output
     STDERR.flush
@@ -517,17 +522,17 @@ class TrySelector
     # If user already typed a name, use it directly
     if !@input_buffer.empty?
       final_name = "#{date_prefix}-#{@input_buffer}".gsub(/\s+/, '-')
-      full_path = File.join(TRY_PATH, final_name)
+      full_path = File.join(@base_path, final_name)
       @selected = { type: :mkdir, path: full_path }
     else
       # No name typed, prompt for one
       suggested_name = ""
 
-      STDERR.print "\e[2J\e[H"
-      STDERR.print "\e[1;32mEnter new try name:\e[0m\r\n"
-      STDERR.print "> \e[38;5;240m#{date_prefix}-\e[39m#{suggested_name}\e[0m"
+      ui_print "{clear_screen}{home}"
+      ui_print "{bold}{green}Enter new try name:{reset}\r\n"
+      ui_print "> \e[38;5;240m#{date_prefix}-\e[39m#{suggested_name}\e[0m"
 
-      STDERR.print "\e[?25h"  # Show cursor
+      ui_print "{show_cursor}"
       STDOUT.flush
 
       # Read user input in cooked mode
@@ -538,98 +543,140 @@ class TrySelector
         final_name = suggested_name if final_name.empty?
       end
 
-      STDERR.print "\e[?25l"  # Hide cursor again
+      ui_print "{hide_cursor}"
 
       final_name = final_name.gsub(/\s+/, '-')
-      full_path = File.join(TRY_PATH, final_name)
+      full_path = File.join(@base_path, final_name)
 
       @selected = { type: :mkdir, path: full_path }
     end
   end
 end
 
-# Main execution
+# Main execution with OptionParser subcommands
 if __FILE__ == $0
-  # Handle command-line flags
-  if ARGV.include?('--help') || ARGV.include?('-h')
-    puts <<~HELP
-      \e[1;36mtry - Lightweight experiments for people with ADHD\e[0m
 
-      \e[1;33mUsage:\e[0m
-        try [search_term]     Interactive directory selector
-        try --help           Show this help message
-        try --init [PATH]    Output shell function for eval
+  # Global, token-aware printer for ANSI/UI output
+  # Tokens supported:
+  #  Colors: {black},{red},{green},{yellow},{blue},{magenta},{cyan},{white},{gray},{bright_black},{bright_red},{bright_green},{bright_yellow},{bright_blue},{bright_magenta},{bright_cyan},{bright_white}
+  #  Styles: {bold},{dim},{italic},{underline},{inverse}
+  #  Resets: {reset},{reset_fg},{reset_bg}
+  #  Screen/Cursor: {clear_screen},{clear_line},{home},{hide_cursor},{show_cursor}
+  #  App-specific: {highlight} (alias of bold yellow), {dark} (gray), {selected} (dark gray bg when selected: true)
+  def ui_print(text, selected: false, io: STDERR)
+    return if text.nil?
+    $token_map ||= {
+      # standard colors
+      '{black}' => "\e[30m", '{red}' => "\e[31m", '{green}' => "\e[32m", '{yellow}' => "\e[33m",
+      '{blue}' => "\e[34m", '{magenta}' => "\e[35m", '{cyan}' => "\e[36m", '{white}' => "\e[37m",
+      '{gray}' => "\e[90m",
+      # bright colors
+      '{bright_red}' => "\e[91m", '{bright_green}' => "\e[92m",
+      '{bright_yellow}' => "\e[93m", '{bright_blue}' => "\e[94m", '{bright_magenta}' => "\e[95m",
+      '{bright_cyan}' => "\e[96m", '{bright_white}' => "\e[97m",
+      # styles
+      '{bold}' => "\e[1m", '{dim}' => "\e[2m", '{italic}' => "\e[3m", '{underline}' => "\e[4m", '{inverse}' => "\e[7m",
+      # resets
+      '{reset}' => "\e[0m", '{reset_fg}' => "\e[39m", '{reset_bg}' => "\e[49m",
+      # screen/cursor
+      '{clear_screen}' => "\e[2J", '{clear_line}' => "\e[2K", '{home}' => "\e[H",
+      '{hide_cursor}' => "\e[?25l", '{show_cursor}' => "\e[?25h",
+      # app-specific aliases
+      '{highlight}' => "\e[1;33m", '{dark}' => "\e[90m",
+      '{selected}' => (selected ? "\e[48;5;236m" : "")
+    }
 
-      \e[1;33mDescription:\e[0m
-        Create and navigate to experiment directories with ease.
-        Perfect for quick prototypes, experiments, and vibecodes projects.
+    io.print(
+      text.gsub(/\{.*?\}/) do |match|
+        $token_map.fetch(match) { raise "Unknown token: #{match}" }
+      end
+    )
+  end
 
-      \e[1;33mFeatures:\e[0m
-        • Interactive TUI with fuzzy search
-        • Auto-prefixes new directories with date (YYYY-MM-DD)
-        • Smart scoring: matches at word boundaries score higher
-        • Recent directories appear first (age-based scoring)
-        • Instant directory creation and navigation
+  def print_global_help
+    ui_print <<~HELP
+      {bold}{cyan}try - Lightweight experiments for people with ADHD{reset}
 
-      \e[1;33mKeyboard Controls:\e[0m
-        ↑/↓ or Ctrl-P/N   Navigate options
-        Enter             Select/create directory
-        Backspace         Delete search character
-        ESC or Ctrl-C     Cancel selection
-        Type              Filter directories
+      this tool is not meant to be used directly, but added to your shell.
+      Add this to your {yellow}~/.zshrc{reset} or {yellow}~/.bashrc{reset}:
 
-      \e[1;33mShell Integration:\e[0m
-        Add to your ~/.bashrc or ~/.zshrc:
+        {highlight} eval "$(try init ~/src/tries)"{reset}
 
-          eval "\$(#{$0} --init #{TrySelector::TRY_PATH})"
 
-        Then use: \e[1;32mtry [search_term]\e[0m
+      {bold}{cyan}Usage:{reset}
+        init --path PATH     # Initialize shell function for aliasing
+        cd [--path PATH] [Q] # Interactive selector; prints shell cd commands
 
-      \e[1;33mExamples:\e[0m
-        try              # Browse all experiments
-        try redis test   # Find/create Redis-related experiment
-        try new api      # Start with "new-api" as suggestion
+        Run '#{$0} COMMAND --help' for more information on a command.
 
-      \e[1;33mEnvironment:\e[0m
-        TRY_PATH - Override default directory location
-        Default: \e[90m~/src/tries\e[0m
-        Current: \e[90m#{TrySelector::TRY_PATH}\e[0m
-        It's best to supply the path you want to use as parameter to --init
+      {bold}{cyan}Commands:{reset}
+        init               Output shell function for aliasing
+        cd                 Interactive selector; prints shell cd commands
 
+      {bold}{cyan}Defaults:{reset}
+        Default path: {gray}~/src/tries{reset} (override with --path on commands)
+        Current default: {gray}#{TrySelector::TRY_PATH}{reset}
     HELP
-    exit 2
-  elsif ARGV.include?('--init')
-    # Output shell function for eval (bash/zsh compatible)
-    script_path = File.expand_path($0)
+  end
 
-    env = ""
-    if path = ARGV[ARGV.index('--init') + 1]
-      env = "TRY_PATH=#{path.inspect}"
+  # Global help: show for --help/-h anywhere
+  if ARGV.include?("--help") || ARGV.include?("-h")
+    print_global_help
+    exit 0
+  end
+
+  # Helper to extract a "--name VALUE" or "--name=VALUE" option from args (last one wins)
+  def extract_option_with_value!(args, opt_name)
+    i = args.rindex { |a| a == opt_name || a.start_with?("#{opt_name}=") }
+    return nil unless i
+    arg = args.delete_at(i)
+    if arg.include?('=')
+      arg.split('=', 2)[1]
+    else
+      args.delete_at(i)
     end
+  end
 
-    # Simple approach: redirect stderr to tty, capture stdout
+  command = ARGV.shift
+
+  case command
+  when nil
+    print_global_help
+    exit 2
+  when 'init'
+    # Allow floating --path anywhere, or positional PATH
+    init_path = extract_option_with_value!(ARGV, '--path')
+    init_path ||= ARGV.shift
+
+    script_path = File.expand_path($0)
+    path_arg = init_path ? " --path \"#{init_path}\"" : ""
     puts <<~SHELL
       try() {
         script_path='#{script_path}';
-        cmd=$(#{env} /usr/bin/env ruby "$script_path" "$@" 2>/dev/tty);
-        [ $? -eq 0 ] && eval "$cmd" || echo $cmd;
+        cmd=$(/usr/bin/env ruby "$script_path" cd#{path_arg} "$@" 2>/dev/tty);
+        [ $? -eq 0 ] && eval "$cmd" || echo "$cmd";
       }
     SHELL
     exit 0
-  else
-    # Normal operation
+  when 'cd'
+    # Allow floating --path anywhere; leave remaining args as search terms
+    base_path = extract_option_with_value!(ARGV, '--path')
+
     search_term = ARGV.join(' ')
-    selector = TrySelector.new(search_term)
+    selector = TrySelector.new(search_term, base_path: base_path || TrySelector::TRY_PATH)
     result = selector.run
 
     if result
-      # Output shell commands to be evaluated
-      puts "dir='#{result[:path]}' \\"
-      if result[:type] == :mkdir
-        puts "&& mkdir -p \"$dir\" \\"
-      end
-      puts "&& touch \"$dir\" \\"
-      puts "&& cd \"$dir\""
+      parts = []
+      parts << "dir='#{result[:path]}'"
+      parts << "mkdir -p \"$dir\"" if result[:type] == :mkdir
+      parts << "touch \"$dir\""
+      parts << "cd \"$dir\""
+      puts parts.join(' && ')
     end
+  else
+    warn "Unknown command: #{command}"
+    print_global_help
+    exit 2
   end
 end
