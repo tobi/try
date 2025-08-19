@@ -1,4 +1,4 @@
-# try something new
+# try - fresh directories for every vibe
 
 > For everyone who constantly creates new projects for little experiments, a one-file Ruby script to quickly manage and navigate to keep them somewhat organized
 
