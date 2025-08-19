@@ -21,8 +21,17 @@ class TrySelector
   end
 
   def run
+    # Always use STDERR for UI (it stays connected to TTY)
+    # This allows stdout to be captured for the shell commands
     setup_terminal
-    STDOUT.raw do
+
+    # Check if we have a TTY
+    if !STDIN.tty? || !STDERR.tty?
+      STDERR.puts "Error: try requires an interactive terminal"
+      return nil
+    end
+
+    STDERR.raw do
       main_loop
     end
   ensure
@@ -33,9 +42,9 @@ class TrySelector
 
   def setup_terminal
     update_terminal_size
-    print "\e[?25l"  # Hide cursor
-    print "\e[2J"     # Clear screen
-    print "\e[H"      # Move to home
+    STDERR.print "\e[?25l"  # Hide cursor
+    STDERR.print "\e[2J"     # Clear screen
+    STDERR.print "\e[H"      # Move to home
   end
 
   def update_terminal_size
@@ -50,8 +59,8 @@ class TrySelector
 
   def restore_terminal
     # Clear screen completely before restoring
-    print "\e[2J\e[H"
-    print "\e[?25h"  # Show cursor
+    STDERR.print "\e[2J\e[H"
+    STDERR.print "\e[?25h"  # Show cursor
   end
 
   def load_all_tries
@@ -60,13 +69,13 @@ class TrySelector
       tries = []
       Dir.foreach(TRY_PATH) do |entry|
         next if entry == '.' || entry == '..'
-        
+
         path = File.join(TRY_PATH, entry)
         stat = File.stat(path)
-        
+
         # Only include directories
         next unless stat.directory?
-        
+
         tries << {
           name: "📁 #{entry}",
           basename: entry,
@@ -101,7 +110,7 @@ class TrySelector
 
   def calculate_score(text, query, ctime = nil, mtime = nil)
     score = 0.0
-    
+
     # If there's a search query, calculate match score
     if !query.empty?
       text_lower = text.downcase
@@ -134,21 +143,21 @@ class TrySelector
 
       # Prefer shorter matches (density bonus)
       score *= (query_chars.length.to_f / (last_pos + 1)) if last_pos >= 0
-      
+
       # Length penalty - shorter text scores higher for same match
       # e.g., "v" matches better in "2025-08-13-v" than "2025-08-13-vbo-viz"
       score *= (10.0 / (text.length + 10.0))  # Smooth penalty that doesn't dominate
     end
-    
+
     # Always apply time-based scoring (but less aggressively)
     now = Time.now
-    
+
     # Creation time bonus - newer is better
     if ctime
       days_old = (now - ctime) / 86400.0
       score += 2.0 / Math.sqrt(days_old + 1)
     end
-    
+
     # Access time bonus - recently accessed is better
     if mtime
       hours_since_access = (now - mtime) / 3600.0
@@ -166,7 +175,7 @@ class TrySelector
       # Ensure cursor is within bounds
       @cursor_pos = [[@cursor_pos, 0].max, total_items - 1].min
 
-      render(trials)
+      render(tries)
 
       key = read_key
 
@@ -217,23 +226,24 @@ class TrySelector
   end
 
   def render(tries)
+    # All UI output goes to STDERR
     # Clear screen and move to top-left
-    print "\e[2J\e[1;1H"
+    STDERR.print "\e[2J\e[1;1H"
 
     # Use actual terminal width for separator lines
     separator = "─" * [(@term_width - 1), 50].min
 
     # Header
-    print "\e[1;36m📁 Try Directory Selection\e[0m\r\n"
-    print "\e[90m#{separator}\e[0m\r\n"
+    STDERR.print "\e[1;36m📁 Try Directory Selection\e[0m\r\n"
+    STDERR.print "\e[90m#{separator}\e[0m\r\n"
 
     # Search input
-    print "\e[1;33mSearch: \e[0m#{@input_buffer}\r\n"
-    print "\e[90m#{separator}\e[0m\r\n"
+    STDERR.print "\e[1;33mSearch: \e[0m#{@input_buffer}\r\n"
+    STDERR.print "\e[90m#{separator}\e[0m\r\n"
 
     # Calculate visible window based on actual terminal height
     max_visible = [@term_height - 8, 3].max
-    total_items = trials.length + 1  # +1 for "Create new"
+    total_items = tries.length + 1  # +1 for "Create new"
 
     # Adjust scroll window
     if @cursor_pos < @scroll_offset
@@ -248,178 +258,176 @@ class TrySelector
     (@scroll_offset...visible_end).each do |idx|
       # Add blank line before "Create new"
       if idx == tries.length && tries.any? && idx >= @scroll_offset
-        print "\r\n"
+        STDERR.print "\r\n"
       end
-      
+
       # Print cursor/selection indicator
       is_selected = idx == @cursor_pos
       if is_selected
-        print "\e[1;35m→ \e[0m"  # Arrow (without reverse video yet)
+        STDERR.print "\e[1;35m→ \e[0m"  # Arrow (without reverse video yet)
       else
-        print "  "
+        STDERR.print "  "
       end
 
       # Display try directory or "Create new" option
       if idx < tries.length
         try_dir = tries[idx]
-        
+
         # Render the folder icon (always outside selection)
-        print "📁 "
-        
+        STDERR.print "📁 "
+
         # Start selection highlighting after icon
         if is_selected
           # Use a subtle background color like fzf (dark gray background)
-          print "\e[48;5;236m"  # Dark gray background
+          STDERR.print "\e[48;5;236m"  # Dark gray background
         end
-        
+
         # Format directory name with date styling
         if try_dir[:basename] =~ /^(\d{4}-\d{2}-\d{2})-(.+)$/
           date_part = $1
           name_part = $2
-          
+
           # Render the date part (faint)
           if is_selected
-            print "\e[38;5;240m#{date_part}\e[39m"  # Darker gray text on selection
+            STDERR.print "\e[38;5;240m#{date_part}\e[39m"  # Darker gray text on selection
           else
-            print "\e[90m#{date_part}\e[0m"  # Gray when not selected
+            STDERR.print "\e[90m#{date_part}\e[0m"  # Gray when not selected
           end
-          
+
           # Render the separator (very faint)
           separator_matches = !@input_buffer.empty? && @input_buffer.include?('-')
           if separator_matches
             if is_selected
-              print "\e[1;38;5;226m-\e[22;39m"  # Bright yellow on selection
+              STDERR.print "\e[1;38;5;226m-\e[22;39m"  # Bright yellow on selection
             else
-              print "\e[1;33m-\e[0m"  # Yellow when not selected
+              STDERR.print "\e[1;33m-\e[0m"  # Yellow when not selected
             end
           else
             # Make separator very faint
             if is_selected
-              print "\e[38;5;238m-\e[39m"  # Very dark gray on selection
+              STDERR.print "\e[38;5;238m-\e[39m"  # Very dark gray on selection
             else
-              print "\e[38;5;238m-\e[0m"  # Very dark gray normally
+              STDERR.print "\e[38;5;238m-\e[0m"  # Very dark gray normally
             end
           end
-          
+
           # Render the name part with match highlighting
           if !@input_buffer.empty?
-            print highlight_matches_for_selection(name_part, @input_buffer, is_selected)
+            STDERR.print highlight_matches_for_selection(name_part, @input_buffer, is_selected)
           else
             if is_selected
-              print "\e[97m#{name_part}\e[39m"  # Bright white on selection
+              STDERR.print "\e[97m#{name_part}\e[39m"  # Bright white on selection
             else
-              print name_part
+              STDERR.print name_part
             end
           end
-          
+
           # Store plain text for width calculation
           display_text = "#{date_part}-#{name_part}"
         else
           # No date prefix - render folder icon then content
           if !@input_buffer.empty?
-            print highlight_matches_for_selection(try_dir[:basename], @input_buffer, is_selected)
+            STDERR.print highlight_matches_for_selection(try_dir[:basename], @input_buffer, is_selected)
           else
             if is_selected
-              print "\e[97m#{try_dir[:basename]}\e[39m"  # Bright white on selection
+              STDERR.print "\e[97m#{try_dir[:basename]}\e[39m"  # Bright white on selection
             else
-              print try_dir[:basename]
+              STDERR.print try_dir[:basename]
             end
           end
-          display_text = trial[:basename]
+          display_text = try_dir[:basename]
         end
-        
+
         # Format score and time for display (time first, then score)
         time_text = format_relative_time(try_dir[:mtime])
         score_text = sprintf("%.1f", try_dir[:score])
-        
+
         # Combine time and score
         meta_text = "#{time_text}, #{score_text}"
-        
+
         # Calculate padding (account for icon being outside selection)
         meta_width = meta_text.length + 1  # +1 for space before meta
         text_width = display_text.length  # Plain text width
         padding_needed = @term_width - 5 - text_width - meta_width  # -5 for arrow + icon + space
         padding = " " * [padding_needed, 1].max
-        
+
         # Print padding and metadata
-        print padding
+        STDERR.print padding
         if is_selected
-          print "\e[38;5;240m #{meta_text}\e[39m"  # Dark gray on selection
+          STDERR.print "\e[38;5;240m #{meta_text}\e[39m"  # Dark gray on selection
         else
-          print " \e[90m#{meta_text}\e[0m"  # Gray normally
+          STDERR.print " \e[90m#{meta_text}\e[0m"  # Gray normally
         end
-        
+
       else
         # This is the "Create new" option
-        print "+ "  # Plus sign outside selection
-        
+        STDERR.print "+ "  # Plus sign outside selection
+
         if is_selected
-          print "\e[48;5;236m"  # Dark gray background like other selections
+          STDERR.print "\e[48;5;236m"  # Dark gray background like other selections
         end
-        
+
         display_text = if @input_buffer.empty?
           "Create new"
         else
           "Create new: #{@input_buffer}"
         end
-        
+
         if is_selected
-          print "\e[97m#{display_text}\e[39m"  # Bright white on selection
+          STDERR.print "\e[97m#{display_text}\e[39m"  # Bright white on selection
         else
-          print display_text
+          STDERR.print display_text
         end
-        
+
         # Pad to full width
         text_width = display_text.length
-        padding_needed = @term_width - 5 - text_width  # -5 for arrow + "+ " 
-        print " " * [padding_needed, 1].max
+        padding_needed = @term_width - 5 - text_width  # -5 for arrow + "+ "
+        STDERR.print " " * [padding_needed, 1].max
       end
 
       # Reset all formatting
-      print "\e[0m"
-      print "\r\n"
+      STDERR.print "\e[0m"
+      STDERR.print "\r\n"
     end
 
     # Scroll indicator if needed
     if total_items > max_visible
-      print "\e[90m#{separator}\e[0m\r\n"
-      print "\e[90m[#{@scroll_offset + 1}-#{visible_end}/#{total_items}]\e[0m\r\n"
+      STDERR.print "\e[90m#{separator}\e[0m\r\n"
+      STDERR.print "\e[90m[#{@scroll_offset + 1}-#{visible_end}/#{total_items}]\e[0m\r\n"
     end
 
     # Instructions at bottom
-    print "\e[90m#{separator}\e[0m\r\n"
-    print "\e[90m↑↓: Navigate  Enter: Select  ESC: Cancel\e[0m"
+    STDERR.print "\e[90m#{separator}\e[0m\r\n"
+    STDERR.print "\e[90m↑↓: Navigate  Enter: Select  ESC: Cancel\e[0m"
 
     # Flush output
-    STDOUT.flush
+    STDERR.flush
   end
 
   def strip_ansi(text)
     text.gsub(/\e\[[0-9;]*m/, '')
   end
-  
+
   def format_relative_time(time)
     return "?" unless time
-    
+
     seconds = Time.now - time
     minutes = seconds / 60
     hours = minutes / 60
     days = hours / 24
-    
+
     if seconds < 10
       "just now"
-    elsif seconds < 60
-      "now"
     elsif minutes < 60
-      "#{minutes.to_i}m"
+      "#{minutes.to_i}m ago"
     elsif hours < 24
-      "#{hours.to_i}h"
+      "#{hours.to_i}h ago"
     elsif days < 30
-      "#{days.to_i}d"
+      "#{days.to_i}d ago"
     elsif days < 365
-      "#{(days/30).to_i}mo"
+      "#{(days/30).to_i}mo ago"
     else
-      "#{(days/365).to_i}y"
+      "#{(days/365).to_i}y ago"
     end
   end
 
@@ -466,7 +474,7 @@ class TrySelector
 
     result
   end
-  
+
   def highlight_matches_for_selection(text, query, is_selected)
     return text if query.empty?
 
@@ -505,7 +513,7 @@ class TrySelector
   def handle_create_new
     # Create new try directory
     date_prefix = Time.now.strftime("%Y-%m-%d")
-    
+
     # If user already typed a name, use it directly
     if !@input_buffer.empty?
       final_name = "#{date_prefix}-#{@input_buffer}".gsub(/\s+/, '-')
@@ -513,23 +521,24 @@ class TrySelector
       @selected = { type: :mkdir, path: full_path }
     else
       # No name typed, prompt for one
-      suggested_name = date_prefix
-      
-      print "\e[2J\e[H"
-      print "\e[1;32mEnter new trial name:\e[0m\r\n"
-      print "> #{suggested_name}"
-      print "\e[?25h"  # Show cursor
+      suggested_name = ""
+
+      STDERR.print "\e[2J\e[H"
+      STDERR.print "\e[1;32mEnter new try name:\e[0m\r\n"
+      STDERR.print "> \e[38;5;240m#{date_prefix}-\e[39m#{suggested_name}\e[0m"
+
+      STDERR.print "\e[?25h"  # Show cursor
       STDOUT.flush
 
       # Read user input in cooked mode
       final_name = ""
-      STDOUT.cooked do
+      STDERR.cooked do
         STDIN.iflush
         final_name = gets.chomp
         final_name = suggested_name if final_name.empty?
       end
 
-      print "\e[?25l"  # Hide cursor again
+      STDERR.print "\e[?25l"  # Hide cursor again
 
       final_name = final_name.gsub(/\s+/, '-')
       full_path = File.join(TRY_PATH, final_name)
@@ -544,16 +553,16 @@ if __FILE__ == $0
   # Handle command-line flags
   if ARGV.include?('--help') || ARGV.include?('-h')
     puts <<~HELP
-      \e[1;36mtry - Lightweight experiment directory manager\e[0m
+      \e[1;36mtry - Lightweight experiments for people with ADHD\e[0m
 
       \e[1;33mUsage:\e[0m
         try [search_term]     Interactive directory selector
         try --help           Show this help message
-        try --eval           Output shell function for eval
+        try --init [PATH]    Output shell function for eval
 
       \e[1;33mDescription:\e[0m
         Create and navigate to experiment directories with ease.
-        Perfect for quick prototypes, experiments, and temporary projects.
+        Perfect for quick prototypes, experiments, and vibecodes projects.
 
       \e[1;33mFeatures:\e[0m
         • Interactive TUI with fuzzy search
@@ -571,33 +580,38 @@ if __FILE__ == $0
 
       \e[1;33mShell Integration:\e[0m
         Add to your ~/.bashrc or ~/.zshrc:
-        \e[90meval "$(#{$0} --eval)"\e[0m
+
+          eval "\$(#{$0} --init #{TrySelector::TRY_PATH})"
 
         Then use: \e[1;32mtry [search_term]\e[0m
 
       \e[1;33mExamples:\e[0m
         try              # Browse all experiments
-        try redis        # Find/create Redis-related experiment
+        try redis test   # Find/create Redis-related experiment
         try new api      # Start with "new-api" as suggestion
 
       \e[1;33mEnvironment:\e[0m
         TRY_PATH - Override default directory location
         Default: \e[90m~/src/tries\e[0m
-        Current: \e[90m#{TRY_PATH}\e[0m
+        Current: \e[90m#{TrySelector::TRY_PATH}\e[0m
+        It's best to supply the path you want to use as parameter to --init
+
     HELP
-    exit 0
-  elsif ARGV.include?('--eval')
+    exit 2
+  elsif ARGV.include?('--init')
     # Output shell function for eval (bash/zsh compatible)
     script_path = File.expand_path($0)
-    # Use semicolons for single-line output to avoid bash parsing issues
-    print "try() { "
-    print "local cmd; "
-    print "cmd=\"$(ruby '#{script_path}' \"$@\")\"; "
-    print "if [ \"$?\" = \"0\" ]; then "
-    print "eval \"$cmd\"; "
-    print "fi; "
-    print "}"
-    puts  # Final newline
+    directory = ARGV[1] || "$TRY_PATH"
+
+    # Simple approach: redirect stderr to tty, capture stdout
+    puts <<~SHELL.gsub(/\n/, '')
+      try() {
+        tries_dir='#{directory}';
+        script_path='#{script_path}';
+        cmd=$(TRY_PATH="$tries_dir" /usr/bin/env ruby "$script_path" "$@" 2>/dev/tty);
+        [ $? -eq 0 ] && eval "$cmd" || echo $cmd;
+      }
+    SHELL
     exit 0
   else
     # Normal operation
@@ -607,19 +621,12 @@ if __FILE__ == $0
 
     if result
       # Output shell commands to be evaluated
-      # Using single quotes to handle paths with spaces/special chars
+      puts "dir='#{result[:path]}' \\"
       if result[:type] == :mkdir
-        puts "dir='#{result[:path]}' && \\"
-        puts "mkdir -p \"$dir\" && \\"
-        puts "cd \"$dir\""
-      else
-        puts "dir='#{result[:path]}' && \\"
-        puts "touch \"$dir\" && \\"
-        puts "cd \"$dir\""
+        puts "&& mkdir -p \"$dir\" \\"
       end
-      exit 0
-    else
-      exit 1
+      puts "&& touch \"$dir\" \\"
+      puts "&& cd \"$dir\""
     end
   end
 end
