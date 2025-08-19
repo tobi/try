@@ -2,7 +2,7 @@
 
 > For everyone who constantly creates new projects for little experiments, a one-file Ruby script to quickly manage and navigate to them.
 
-Ever find yourself with 50 directories named `test`, `test2`, `new-test`, `actually-working-test`, scattered across your filesystem? Or worse, just coding in `/tmp` and losing everything? 
+Ever find yourself with 50 directories named `test`, `test2`, `new-test`, `actually-working-test`, scattered across your filesystem? Or worse, just coding in `/tmp` and losing everything?
 
 **try** is here for your beautifully chaotic mind.
 
@@ -12,7 +12,7 @@ Ever find yourself with 50 directories named `test`, `test2`, `new-test`, `actua
 $ try
 ```
 
-![Demo](demo.gif) <!-- You should add a demo gif here -->
+<!-- Demo GIF coming soon -->
 
 Instantly navigate through all your experiment directories with:
 - **Fuzzy search** that just works
@@ -23,12 +23,14 @@ Instantly navigate through all your experiment directories with:
 ## Quick Start
 
 ```bash
-# Download the script
-curl -O https://raw.githubusercontent.com/yourusername/try/main/try.rb
-chmod +x try.rb
+# Option 1: Download from the latest GitHub Release (recommended)
+# Open the latest release page and download `try.rb`:
+#   https://github.com/<owner>/<repo>/releases/latest
 
+
+curl -sL https://raw.githubusercontent.com/tobi/try/refs/heads/main/try.rb > ~/.local/try.rb
 # Add to your shell (bash/zsh)
-echo 'eval "$(~/path/to/try.rb --eval)"' >> ~/.zshrc
+echo 'eval "$(~/.local/try.rb init ~/src/tries)"' >> ~/.zshrc
 
 # Start using it
 try redis     # Creates 2025-08-17-redis and jumps into it
@@ -46,7 +48,7 @@ All your experiments in one place, with instant fuzzy search:
 ```bash
 $ try pool
 → 2025-08-14-redis-connection-pool    2h, 18.5
-  2025-08-03-thread-pool              3d, 12.1  
+  2025-08-03-thread-pool              3d, 12.1
   2025-07-22-db-pooling               2w, 8.3
   + Create new: pool
 ```
@@ -98,15 +100,17 @@ ln -s $(pwd)/try/try.rb /usr/local/bin/try
 
 Add to your `~/.bashrc` or `~/.zshrc`:
 
+
+
 ```bash
-eval "$(try --eval)"
+# default is ~/src/tries
+eval "$(~/.local/try.rb init)"
 ```
 
 Or if you want to customize the location:
 
 ```bash
-export TRY_PATH=~/projects/experiments
-eval "$(try --eval)"
+eval "$(~/.local/try.rb init ~/src/tries)"
 ```
 
 ## Usage
@@ -114,7 +118,7 @@ eval "$(try --eval)"
 ```bash
 try                 # Browse all experiments
 try redis           # Jump to redis experiment or create new
-try new api         # Start with "2025-08-17-new-api" 
+try new api         # Start with "2025-08-17-new-api"
 try --help          # See all options
 ```
 
@@ -151,16 +155,16 @@ Every experiment gets a home. Every home is instantly findable. Your 2am coding 
 
 ## FAQ
 
-**Q: Why not just use `cd` and `ls`?**  
+**Q: Why not just use `cd` and `ls`?**
 A: Because you have 200 directories and can't remember if you called it `test-redis`, `redis-test`, or `new-redis-thing`.
 
-**Q: Why not use `fzf`?**  
+**Q: Why not use `fzf`?**
 A: fzf is great for files. This is specifically for project directories, with time-awareness and auto-creation built in.
 
-**Q: Can I use this for real projects?**  
+**Q: Can I use this for real projects?**
 A: You can, but it's designed for experiments. Real projects deserve real names in real locations.
 
-**Q: What if I have thousands of experiments?**  
+**Q: What if I have thousands of experiments?**
 A: First, welcome to the club. Second, it handles it fine - the scoring algorithm ensures relevant stuff stays on top.
 
 ## Contributing

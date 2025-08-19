@@ -239,12 +239,12 @@ class TrySelector
     separator = "─" * (@term_width - 1)
 
     # Header
-    ui_print "{bold}{cyan}📁 Try Directory Selection{reset}\r\n"
-    ui_print "{gray}#{separator}{reset}\r\n"
+    ui_print "{h1}📁 Try Directory Selection{text}\r\n"
+    ui_print "{dim_text}#{separator}{text}\r\n"
 
     # Search input
-    ui_print "{highlight}Search: {reset}#{@input_buffer}\r\n"
-    ui_print "{gray}#{separator}{reset}\r\n"
+    ui_print "{highlight}Search: {text}#{@input_buffer}\r\n"
+    ui_print "{dim_text}#{separator}{text}\r\n"
 
     # Calculate visible window based on actual terminal height
     max_visible = [@term_height - 8, 3].max
@@ -268,11 +268,7 @@ class TrySelector
 
       # Print cursor/selection indicator
       is_selected = idx == @cursor_pos
-      if is_selected
-        ui_print "{bold}{magenta}→ {reset}"  # Arrow (without reverse video yet)
-      else
-        ui_print "  "
-      end
+      ui_print(is_selected ? "{highlight}→ {text}" : "  ")
 
       # Display try directory or "Create new" option
       if idx < tries.length
@@ -282,10 +278,7 @@ class TrySelector
         ui_print "📁 "
 
         # Start selection highlighting after icon
-        if is_selected
-          # Use a subtle background color like fzf (dark gray background)
-          ui_print "{selected}", selected: true  # Dark gray background
-        end
+        ui_print "{start_selected}" if is_selected
 
         # Format directory name with date styling
         if try_dir[:basename] =~ /^(\d{4}-\d{2}-\d{2})-(.+)$/
@@ -293,38 +286,21 @@ class TrySelector
           name_part = $2
 
           # Render the date part (faint)
-          if is_selected
-            ui_print "\e[38;5;240m#{date_part}\e[39m"  # Darker gray text on selection
-          else
-            ui_print "{gray}#{date_part}{reset}"  # Gray when not selected
-          end
+          ui_print "{dim_text}#{date_part}{text}"
 
           # Render the separator (very faint)
           separator_matches = !@input_buffer.empty? && @input_buffer.include?('-')
           if separator_matches
-            if is_selected
-              ui_print "\e[1;38;5;226m-\e[22;39m"  # Bright yellow on selection
-            else
-              ui_print "{highlight}-{reset}"  # Yellow when not selected
-            end
+            ui_print "{highlight}-{text}"
           else
-            # Make separator very faint
-            if is_selected
-              ui_print "\e[38;5;238m-\e[39m"  # Very dark gray on selection
-            else
-              ui_print "\e[38;5;238m-\e[0m"  # Very dark gray normally
-            end
+            ui_print "{dim_text}-{text}"
           end
 
           # Render the name part with match highlighting
           if !@input_buffer.empty?
             ui_print highlight_matches_for_selection(name_part, @input_buffer, is_selected)
           else
-            if is_selected
-              ui_print "\e[97m#{name_part}\e[39m"  # Bright white on selection
-            else
-              ui_print name_part
-            end
+            ui_print name_part
           end
 
           # Store plain text for width calculation
@@ -334,11 +310,7 @@ class TrySelector
           if !@input_buffer.empty?
             ui_print highlight_matches_for_selection(try_dir[:basename], @input_buffer, is_selected)
           else
-            if is_selected
-              ui_print "\e[97m#{try_dir[:basename]}\e[39m"  # Bright white on selection
-            else
-              ui_print try_dir[:basename]
-            end
+            ui_print try_dir[:basename]
           end
           display_text = try_dir[:basename]
         end
@@ -358,19 +330,13 @@ class TrySelector
 
         # Print padding and metadata
         ui_print padding
-        if is_selected
-          ui_print "\e[38;5;240m #{meta_text}\e[39m"  # Dark gray on selection
-        else
-          ui_print " {gray}#{meta_text}{reset}"  # Gray normally
-        end
+        ui_print " {dim_text}#{meta_text}{text}"
 
       else
         # This is the "Create new" option
         ui_print "+ "  # Plus sign outside selection
 
-        if is_selected
-          ui_print "{selected}", selected: true  # Dark gray background like other selections
-        end
+        ui_print "{start_selected}" if is_selected
 
         display_text = if @input_buffer.empty?
           "Create new"
@@ -378,11 +344,7 @@ class TrySelector
           "Create new: #{@input_buffer}"
         end
 
-        if is_selected
-          ui_print "\e[97m#{display_text}\e[39m"  # Bright white on selection
-        else
-          ui_print display_text
-        end
+        ui_print display_text
 
         # Pad to full width
         text_width = display_text.length
@@ -390,28 +352,25 @@ class TrySelector
         ui_print " " * [padding_needed, 1].max
       end
 
-      # Reset all formatting
-      ui_print "{reset}"
+      # End selection and reset all formatting
+      ui_print "{end_selected}{text}"
       ui_print "\r\n"
     end
 
     # Scroll indicator if needed
     if total_items > max_visible
-      ui_print "{gray}#{separator}{reset}\r\n"
-      ui_print "{gray}[#{@scroll_offset + 1}-#{visible_end}/#{total_items}]{reset}\r\n"
+      ui_print "{dim_text}#{separator}{text}\r\n"
+      ui_print "{dim_text}[#{@scroll_offset + 1}-#{visible_end}/#{total_items}]{text}\r\n"
     end
 
     # Instructions at bottom
-    ui_print "{gray}#{separator}{reset}\r\n"
-    ui_print "{gray}↑↓: Navigate  Enter: Select  ESC: Cancel{reset}"
+    ui_print "{dim_text}#{separator}{text}\r\n"
+    ui_print "{dim_text}↑↓: Navigate  Enter: Select  ESC: Cancel{text}"
 
     # Flush output
     STDERR.flush
   end
 
-  def strip_ansi(text)
-    text.gsub(/\e\[[0-9;]*m/, '')
-  end
 
   def format_relative_time(time)
     return "?" unless time
@@ -470,7 +429,7 @@ class TrySelector
 
     text.chars.each_with_index do |char, i|
       if query_index < query_chars.length && text_lower[i] == query_chars[query_index]
-        result += "\e[1;33m#{char}\e[0m"  # Yellow bold for matches
+        result += "{highlight}#{char}{text}"  # Yellow bold for matches (preserve bg)
         query_index += 1
       else
         result += char
@@ -492,18 +451,11 @@ class TrySelector
     text.chars.each_with_index do |char, i|
       if query_index < query_chars.length && text_lower[i] == query_chars[query_index]
         # Use same yellow for matches regardless of selection
-        result += "\e[1;33m#{char}\e[0m"
-        if is_selected
-          result += "\e[48;5;236m"  # Reapply background after reset
-        end
+        result += "{highlight}#{char}{text}"  # Preserve bg with text token
         query_index += 1
       else
         # Regular text
-        if is_selected
-          result += "\e[97m#{char}\e[39m"  # Bright white for non-matches on selection
-        else
-          result += char
-        end
+        result += char
       end
     end
 
@@ -529,23 +481,24 @@ class TrySelector
       suggested_name = ""
 
       ui_print "{clear_screen}{home}"
-      ui_print "{bold}{green}Enter new try name:{reset}\r\n"
-      ui_print "> \e[38;5;240m#{date_prefix}-\e[39m#{suggested_name}\e[0m"
+      ui_print "{h2}Enter new try name{text}\r\n"
+      ui_print "> {dim_text}#{date_prefix}-{text}#{suggested_name}"
 
       ui_print "{show_cursor}"
       STDOUT.flush
 
+      entry = ""
       # Read user input in cooked mode
-      final_name = ""
       STDERR.cooked do
         STDIN.iflush
-        final_name = gets.chomp
-        final_name = suggested_name if final_name.empty?
+        entry = gets.chomp
       end
 
-      ui_print "{hide_cursor}"
+      if entry.empty?
+        return { type: :cancel, path: nil  }
+      end
 
-      final_name = final_name.gsub(/\s+/, '-')
+      final_name = "#{date_prefix}-#{entry}".gsub(/\s+/, '-')
       full_path = File.join(@base_path, final_name)
 
       @selected = { type: :mkdir, path: full_path }
@@ -557,33 +510,32 @@ end
 if __FILE__ == $0
 
   # Global, token-aware printer for ANSI/UI output
-  # Tokens supported:
-  #  Colors: {black},{red},{green},{yellow},{blue},{magenta},{cyan},{white},{gray},{bright_black},{bright_red},{bright_green},{bright_yellow},{bright_blue},{bright_magenta},{bright_cyan},{bright_white}
-  #  Styles: {bold},{dim},{italic},{underline},{inverse}
-  #  Resets: {reset},{reset_fg},{reset_bg}
-  #  Screen/Cursor: {clear_screen},{clear_line},{home},{hide_cursor},{show_cursor}
-  #  App-specific: {highlight} (alias of bold yellow), {dark} (gray), {selected} (dark gray bg when selected: true)
-  def ui_print(text, selected: false, io: STDERR)
+  # Minimal semantic tokens:
+  #  {text}        Reset to default foreground (keeps background)
+  #  {dim_text}    Dim/gray foreground
+  #  {h1}          Primary heading (bold + yellow)
+  #  {h2}          Secondary heading (dim yellow)
+  #  {highlight}   Emphasis (bold + yellow)
+  #  {start_selected}/{end_selected}  Selection background on/off
+  # Utility tokens (rare): {reset}, {reset_bg}, {clear_screen}, {clear_line}, {home}, {hide_cursor}, {show_cursor}
+  def ui_print(text, io: STDERR)
     return if text.nil?
     $token_map ||= {
-      # standard colors
-      '{black}' => "\e[30m", '{red}' => "\e[31m", '{green}' => "\e[32m", '{yellow}' => "\e[33m",
-      '{blue}' => "\e[34m", '{magenta}' => "\e[35m", '{cyan}' => "\e[36m", '{white}' => "\e[37m",
-      '{gray}' => "\e[90m",
-      # bright colors
-      '{bright_red}' => "\e[91m", '{bright_green}' => "\e[92m",
-      '{bright_yellow}' => "\e[93m", '{bright_blue}' => "\e[94m", '{bright_magenta}' => "\e[95m",
-      '{bright_cyan}' => "\e[96m", '{bright_white}' => "\e[97m",
-      # styles
-      '{bold}' => "\e[1m", '{dim}' => "\e[2m", '{italic}' => "\e[3m", '{underline}' => "\e[4m", '{inverse}' => "\e[7m",
-      # resets
-      '{reset}' => "\e[0m", '{reset_fg}' => "\e[39m", '{reset_bg}' => "\e[49m",
+      # semantic foreground styles
+      # '{text}' => "\e[39m",
+      '{text}' => "\e[39m",
+      '{dim_text}' => "\e[90m",
+      '{h1}' => "\e[1;33m",
+      '{h2}' => "\e[1;36m",
+      '{highlight}' => "\e[1;33m",
+      # resets/util
+      '{reset}' => "\e[0m", '{reset_bg}' => "\e[49m",
       # screen/cursor
       '{clear_screen}' => "\e[2J", '{clear_line}' => "\e[2K", '{home}' => "\e[H",
       '{hide_cursor}' => "\e[?25l", '{show_cursor}' => "\e[?25h",
-      # app-specific aliases
-      '{highlight}' => "\e[1;33m", '{dark}' => "\e[90m",
-      '{selected}' => (selected ? "\e[48;5;236m" : "")
+      # Selection background: faint
+      '{start_selected}' => "\e[6m",
+      '{end_selected}' => "\e[0m"
     }
 
     io.print(
@@ -595,27 +547,23 @@ if __FILE__ == $0
 
   def print_global_help
     ui_print <<~HELP
-      {bold}{cyan}try - Lightweight experiments for people with ADHD{reset}
+      {h1}try something!{text}
 
-      this tool is not meant to be used directly, but added to your shell.
-      Add this to your {yellow}~/.zshrc{reset} or {yellow}~/.bashrc{reset}:
+      Lightweight experiments for people with ADHD
 
-        {highlight} eval "$(try init ~/src/tries)"{reset}
+      this tool is not meant to be used directly,
+      but added to your ~/.zshrc or ~/.bashrc:
+
+        {highlight}eval "$(#$0 init ~/src/tries)"{text}
+
+      {h2}Usage:{text}
+        init [--path PATH]  # Initialize shell function for aliasing
+        cd [QUERY]          # Interactive selector; prints shell cd commands
 
 
-      {bold}{cyan}Usage:{reset}
-        init --path PATH     # Initialize shell function for aliasing
-        cd [--path PATH] [Q] # Interactive selector; prints shell cd commands
-
-        Run '#{$0} COMMAND --help' for more information on a command.
-
-      {bold}{cyan}Commands:{reset}
-        init               Output shell function for aliasing
-        cd                 Interactive selector; prints shell cd commands
-
-      {bold}{cyan}Defaults:{reset}
-        Default path: {gray}~/src/tries{reset} (override with --path on commands)
-        Current default: {gray}#{TrySelector::TRY_PATH}{reset}
+      {h2}Defaults:{text}
+        Default path: {dim_text}~/src/tries{text} (override with --path on commands)
+        Current default: {dim_text}#{TrySelector::TRY_PATH}{text}
     HELP
   end
 
@@ -639,17 +587,22 @@ if __FILE__ == $0
 
   command = ARGV.shift
 
+  tries_path = extract_option_with_value!(ARGV, '--path') || TrySelector::TRY_PATH
+  tries_path = File.expand_path(tries_path)
+
   case command
   when nil
     print_global_help
     exit 2
   when 'init'
-    # Allow floating --path anywhere, or positional PATH
-    init_path = extract_option_with_value!(ARGV, '--path')
-    init_path ||= ARGV.shift
-
     script_path = File.expand_path($0)
-    path_arg = init_path ? " --path \"#{init_path}\"" : ""
+
+    if ARGV[0] && ARGV[0].start_with?('/')
+      tries_path = File.expand_path(ARGV[0])
+      ARGV.shift
+    end
+
+    path_arg = tries_path ? " --path \"#{tries_path}\"" : ""
     puts <<~SHELL
       try() {
         script_path='#{script_path}';
@@ -659,11 +612,8 @@ if __FILE__ == $0
     SHELL
     exit 0
   when 'cd'
-    # Allow floating --path anywhere; leave remaining args as search terms
-    base_path = extract_option_with_value!(ARGV, '--path')
-
     search_term = ARGV.join(' ')
-    selector = TrySelector.new(search_term, base_path: base_path || TrySelector::TRY_PATH)
+    selector = TrySelector.new(search_term, base_path: tries_path)
     result = selector.run
 
     if result
