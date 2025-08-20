@@ -1,0 +1,32 @@
+name: build
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+
+jobs:
+  build:
+    name: Build (Linux + macOS)
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        goos: [ linux, darwin ]
+        arch: [ amd64, arm64 ]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22.x'
+      - name: Build binary
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.arch }}
+        run: |
+          mkdir -p dist
+          go build -ldflags "-s -w" -o dist/try-${{ matrix.goos }}-${{ matrix.arch }} ./try.go
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: try-${{ matrix.goos }}-${{ matrix.arch }}
+          path: dist/try-${{ matrix.goos }}-${{ matrix.arch }}

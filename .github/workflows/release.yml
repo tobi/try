@@ -1,0 +1,34 @@
+name: release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build-release:
+    name: Build and Release
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        goos: [ linux, darwin ]
+        arch: [ amd64, arm64 ]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22.x'
+      - name: Build binaries
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.arch }}
+        run: |
+          mkdir -p dist
+          go build -ldflags "-s -w" -o dist/try-${{ matrix.goos }}-${{ matrix.arch }} ./try.go
+      - name: Upload Release Assets
+        uses: softprops/action-gh-release@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          files: |
+            dist/try-${{ matrix.goos }}-${{ matrix.arch }}
