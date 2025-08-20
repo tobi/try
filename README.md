@@ -1,5 +1,7 @@
 # try - fresh directories for every vibe
 
+*Your experiments deserve a home.* 🏠
+
 > For everyone who constantly creates new projects for little experiments, a one-file Ruby script to quickly manage and navigate to keep them somewhat organized
 
 Ever find yourself with 50 directories named `test`, `test2`, `new-test`, `actually-working-test`, scattered across your filesystem? Or worse, just coding in `/tmp` and losing everything?
