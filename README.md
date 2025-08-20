@@ -21,6 +21,9 @@ Instantly navigate through all your experiment directories with:
 ```bash
 curl -sL https://raw.githubusercontent.com/tobi/try/refs/heads/main/try.rb > ~/.local/try.rb
 
+# Make "try" executable so it can be run directly
+chmod +x ~/.local/try.rb
+
 # Add to your shell (bash/zsh)
 echo 'eval "$(~/.local/try.rb init ~/src/tries)"' >> ~/.zshrc
 ```
