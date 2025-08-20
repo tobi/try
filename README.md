@@ -115,6 +115,31 @@ export TRY_PATH=~/code/sketches
 
 Default: `~/src/tries`
 
+## Nix
+
+### Quick start
+
+```bash
+nix run github:tobi/try
+nix run github:tobi/try -- --help
+nix run github:tobi/try init ~/my-tries
+```
+
+### Home Manager
+
+```nix
+{
+  inputs.try.url = "github:tobi/try";
+  
+  imports = [ inputs.try.homeManagerModules.default ];
+  
+  programs.try = {
+    enable = true;
+    path = "~/experiments";  # optional, defaults to ~/src/tries
+  };
+}
+```
+
 ## Why Ruby?
 
 - One file, no dependencies
