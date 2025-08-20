@@ -24,7 +24,7 @@ jobs:
           GOARCH: ${{ matrix.arch }}
         run: |
           mkdir -p dist
-          go build -ldflags "-s -w" -o dist/try-${{ matrix.goos }}-${{ matrix.arch }} ./try.go
+          go build -ldflags "-s -w" -o dist/try-${{ matrix.goos }}-${{ matrix.arch }} .
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
