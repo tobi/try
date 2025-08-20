@@ -33,11 +33,11 @@
             };
             
             config = mkIf cfg.enable {
-              programs.bash.initExtra = mkIf config.programs.bash.enable ''
+              programs.bash.initContent = mkIf config.programs.bash.enable ''
                 eval "$(${cfg.package}/bin/try init ${cfg.path})"
               '';
               
-              programs.zsh.initExtra = mkIf config.programs.zsh.enable ''
+              programs.zsh.initContent = mkIf config.programs.zsh.enable ''
                 eval "$(${cfg.package}/bin/try init ${cfg.path})"
               '';
               
