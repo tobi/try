@@ -96,10 +96,11 @@ eval "$(~/.local/try.rb init ~/src/tries)"
 ## Usage
 
 ```bash
-try                 # Browse all experiments
-try redis           # Jump to redis experiment or create new
-try new api         # Start with "2025-08-17-new-api"
-try --help          # See all options
+try                                 # Browse all experiments
+try redis                           # Jump to redis experiment or create new
+try https://github.com/tobi/try.git # Create experiment directory 2025-08-17-try, clone git then jump into it    
+try new api                         # Start with "2025-08-17-new-api"
+try --help                          # See all options
 ```
 
 ### Keyboard Shortcuts
