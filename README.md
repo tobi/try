@@ -15,7 +15,7 @@ In a world full of complex productivity tools, Personal Organizer focuses on wha
 * **✔️ Open & Extensible:** Built on modern technologies, this platform is ready for you to customize and contribute.
 * **✔️ Free, Forever:** As an open-source project, you have full control over your data and the tool's future.
 
-![App Screenshot](https://photos.app.goo.gl/xmCpgnQXc8nnySHN8)
+![App Screenshot](./assets/logo_software_personal_organizator_for_adhders.jpg)
 
 ## ✨ Key Features
 
