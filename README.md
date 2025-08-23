@@ -28,6 +28,9 @@ chmod +x ~/.local/try.rb
 
 # Add to your shell (bash/zsh)
 echo 'eval "$(~/.local/try.rb init ~/src/tries)"' >> ~/.zshrc
+
+# for fish shell users
+echo 'eval "$(~/.local/try.rb init ~/src/tries | string collect)"' >> ~/.config/fish/config.fish
 ```
 
 ## The Problem
