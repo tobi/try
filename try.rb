@@ -98,9 +98,12 @@ class TrySelector
   TRY_PATH = ENV['TRY_PATH'] || File.expand_path("~/src/tries")
 
   def initialize(search_term = "", base_path: TRY_PATH)
-    if search_term =~ /\A(https?:|git@).*\.git\z/
-      @git_url_buffer = search_term
-      @search_term = ""
+    words = search_term.split(/\s+/)
+    git_url = words.find { |w| w =~ /\A(https?:|git@).*\.git\z/ }
+
+    if git_url
+      @git_url_buffer = git_url
+      @search_term = (words - [git_url]).join('-')
     else
       @git_url_buffer = ""
       @search_term = search_term.gsub(/\s+/, '-')
@@ -579,7 +582,8 @@ class TrySelector
 
     if !@git_url_buffer.empty?
       repo_name = extract_repo_name_from_url(@git_url_buffer)
-      final_name = "#{date_prefix}-#{repo_name}".gsub(/\s+/, '-')
+      name_part = @input_buffer.empty? ? repo_name : "#{@input_buffer}-#{repo_name}"
+      final_name = "#{date_prefix}-#{name_part}".gsub(/\s+/, '-')
       action = { type: :mkdir_and_clone, git_url: @git_url_buffer }
     elsif !@input_buffer.empty?
       final_name = "#{date_prefix}-#{@input_buffer}".gsub(/\s+/, '-')
