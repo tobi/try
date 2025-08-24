@@ -574,17 +574,15 @@ class TrySelector
   def handle_create_new
     # Create new try directory
     date_prefix = Time.now.strftime("%Y-%m-%d")
+    final_name = nil
+    action = { type: :mkdir } # default action
 
     if !@git_url_buffer.empty?
-        repo_name = extract_repo_name_from_url(@git_url_buffer)
-        final_name = "#{date_prefix}-#{repo_name}".gsub(/\s+/, '-')
-        full_path = File.join(@base_path, final_name)
-        @selected = { type: :mkdir_and_clone, path: full_path, git_url: @git_url_buffer }
-    # If user already typed a name, use it directly
+      repo_name = extract_repo_name_from_url(@git_url_buffer)
+      final_name = "#{date_prefix}-#{repo_name}".gsub(/\s+/, '-')
+      action = { type: :mkdir_and_clone, git_url: @git_url_buffer }
     elsif !@input_buffer.empty?
       final_name = "#{date_prefix}-#{@input_buffer}".gsub(/\s+/, '-')
-      full_path = File.join(@base_path, final_name)
-      @selected = { type: :mkdir, path: full_path }
     else
       # No name typed, prompt for one
       suggested_name = ""
@@ -602,13 +600,19 @@ class TrySelector
       end
 
       if entry.empty?
-        return { type: :cancel, path: nil  }
+        @selected = { type: :cancel, path: nil }
+        return
       end
 
       final_name = "#{date_prefix}-#{entry}".gsub(/\s+/, '-')
-      full_path = File.join(@base_path, final_name)
+    end
 
-      @selected = { type: :mkdir, path: full_path }
+    full_path = File.join(@base_path, final_name)
+
+    if Dir.exist?(full_path)
+      @selected = { type: :error, message: "Directory '#{final_name}' already exists." }
+    else
+      @selected = action.merge(path: full_path)
     end
   end
 
@@ -749,13 +753,31 @@ if __FILE__ == $0
     result = selector.run
 
     if result
-      parts = []
-      parts << (fish? ? "set -l dir '#{result[:path]}'" : "dir='#{result[:path]}'")
-      parts << "mkdir -p \"$dir\"" if result[:type] == :mkdir
-      parts << "touch \"$dir\""
-      parts << "cd \"$dir\""
-      puts parts.join(" \\\n  && ")
+      case result[:type]
+      when :error
+        puts "echo \"Error: #{result[:message]}\""
+        exit 1
+      when :cancel
+        exit 0 # Success, but do nothing.
+      when :cd, :mkdir, :mkdir_and_clone
+        parts = []
+        parts << (fish? ? "set -l dir '#{result[:path]}'" : "dir='#{result[:path]}'")
+        case result[:type]
+        when :mkdir
+          # create directory and touch to ensure it exists
+          parts << "mkdir -p \"$dir\""
+          parts << "touch \"$dir\""
+        when :mkdir_and_clone
+          # create directory, clone repo into it
+          parts << "mkdir -p \"$dir\""
+          parts << "cd \"$dir\""
+          parts << "git clone '#{result[:git_url]}' ."
+        end
+        parts << "cd \"$dir\""
+        puts parts.join(" \\\n  && ")
+      end
     end
+
   else
     warn "Unknown command: #{command}"
     print_global_help
