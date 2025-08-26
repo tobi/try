@@ -207,6 +207,10 @@ class TrySelector
       when "\x03", "\e"  # Ctrl-C or ESC
         @selected = nil
         break
+      when "\x04"  # Ctrl-D - Delete shortcut
+        if @cursor_pos < tries.length
+          handle_delete(tries[@cursor_pos])
+        end
       when String
         # Only accept printable characters, not escape sequences
         if key.length == 1 && key =~ /[a-zA-Z0-9\-\_\. ]/
@@ -365,7 +369,7 @@ class TrySelector
 
     # Instructions at bottom
     ui_print "{dim_text}#{separator}{text}\r\n"
-    ui_print "{dim_text}↑↓: Navigate  Enter: Select  ESC: Cancel{text}"
+    ui_print "{dim_text}↑↓: Navigate  Enter: Select  Ctrl-D: Delete  ESC: Cancel{text}"
 
     # Flush output
     STDERR.flush
@@ -502,6 +506,103 @@ class TrySelector
       full_path = File.join(@base_path, final_name)
 
       @selected = { type: :mkdir, path: full_path }
+    end
+  end
+
+  def handle_delete(try_dir)
+    # Show confirmation dialog
+    ui_print "{clear_screen}{home}"
+    ui_print "{h1}📁 Try Directory Deletion{text}\r\n"
+    
+    # Use actual terminal width for separator lines
+    separator = "─" * (@term_width - 1)
+    ui_print "{dim_text}#{separator}{text}\r\n"
+    ui_print "\r\n"
+    
+    # Show the formatted entry exactly as it appears in the list
+    ui_print "📁 "
+    
+    # Format directory name with date styling  
+    if try_dir[:basename] =~ /^(\d{4}-\d{2}-\d{2})-(.+)$/
+      date_part = $1
+      name_part = $2
+      ui_print "{dim_text}#{date_part}{text}"
+      ui_print "{dim_text}-{text}"
+      ui_print name_part
+      display_text = "#{date_part}-#{name_part}"
+    else
+      ui_print try_dir[:basename]
+      display_text = try_dir[:basename]
+    end
+    
+    # Add metadata like in the list view
+    if try_dir[:score] && try_dir[:mtime]
+      # Format score and time for display (time first, then score)
+      time_text = format_relative_time(try_dir[:mtime])
+      score_text = sprintf("%.1f", try_dir[:score])
+      
+      # Combine time and score
+      meta_text = "#{time_text}, #{score_text}"
+      
+      # Calculate padding (account for icon)
+      meta_width = meta_text.length + 1  # +1 for space before meta
+      text_width = display_text.length  # Plain text width
+      padding_needed = @term_width - 3 - text_width - meta_width  # -3 for icon + space
+      padding = " " * [padding_needed, 1].max
+      
+      # Print padding and metadata
+      ui_print padding
+      ui_print " {dim_text}#{meta_text}{text}"
+    end
+    
+    ui_print "\r\n\r\n"
+    ui_print "{highlight}This action cannot be undone!{text}"
+    ui_print "\r\n\r\n"
+    
+    ui_print "Type {highlight}YES{text} to confirm deletion: "
+    
+    ui_print "{show_cursor}"
+    STDERR.flush
+
+    # Read user input character by character to handle ESC
+    confirmation = ""
+    loop do
+      key = read_key
+      
+      case key
+      when "\e"  # ESC key
+        ui_print "{hide_cursor}"
+        return  # Return to main list
+      when "\r", "\n"  # Enter key
+        break
+      when "\x7F", "\b"  # Backspace
+        if confirmation.length > 0
+          confirmation = confirmation[0...-1]
+          # Move cursor back, print space, move back again
+          ui_print "\b \b"
+        end
+      when "\x03"  # Ctrl-C
+        ui_print "{hide_cursor}"
+        return  # Return to main list
+      when String
+        # Only accept printable characters for typing YES
+        if key.length == 1 && key =~ /[a-zA-Z]/
+          confirmation += key.upcase
+          ui_print key.upcase
+        end
+      end
+    end
+
+    ui_print "{hide_cursor}"
+
+    if confirmation == "YES"
+      begin
+        FileUtils.rm_rf(try_dir[:path])
+        # Clear the cached tries to refresh the list
+        @all_tries = nil
+      rescue => e
+        # Silently handle errors - could add logging here if needed
+      end
     end
   end
 end
