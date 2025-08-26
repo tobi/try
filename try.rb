@@ -98,10 +98,20 @@ class TrySelector
   TRY_PATH = ENV['TRY_PATH'] || File.expand_path("~/src/tries")
 
   def initialize(search_term = "", base_path: TRY_PATH)
-    @search_term = search_term.gsub(/\s+/, '-')
+    words = search_term.split(/\s+/)
+    git_url = words.find { |w| w =~ /\A(https?:|git@).*\.git\z/ }
+
+    if git_url
+      @git_url_buffer = git_url
+      @search_term = (words - [git_url]).join('-')
+    else
+      @git_url_buffer = ""
+      @search_term = search_term.gsub(/\s+/, '-')
+    end
     @cursor_pos = 0
     @scroll_offset = 0
     @input_buffer = @search_term
+    @active_input = :search
     @selected = nil
     @all_trials = nil  # Memoized trials
     @base_path = base_path
@@ -266,6 +276,8 @@ class TrySelector
         @cursor_pos = [@cursor_pos - 1, 0].max
       when "\e[B", "\x0E"  # Down arrow or Ctrl-N
         @cursor_pos = [@cursor_pos + 1, total_items - 1].min
+      when "\t" # Tab
+        @active_input = @active_input == :search ? :git_url : :search
       when "\e[C"  # Right arrow - ignore
         # Do nothing
       when "\e[D"  # Left arrow - ignore
@@ -279,7 +291,11 @@ class TrySelector
         end
         break if @selected
       when "\x7F", "\b"  # Backspace
-        @input_buffer = @input_buffer[0...-1] if @input_buffer.length > 0
+        if @active_input == :search
+            @input_buffer = @input_buffer[0...@input_buffer.length - 1] if @input_buffer.length > 0
+        else
+            @git_url_buffer = @git_url_buffer[0...@git_url_buffer.length - 1] if @git_url_buffer.length > 0
+        end
         @cursor_pos = 0
       when "\x04"  # Ctrl-D
         if @cursor_pos < tries.length
@@ -290,8 +306,12 @@ class TrySelector
         break
       when String
         # Only accept printable characters, not escape sequences
-        if key.length == 1 && key =~ /[a-zA-Z0-9\-\_\. ]/
-          @input_buffer += key
+        if key.length == 1 && key =~ /[a-zA-Z0-9\-_\.\/:@]/ 
+            if @active_input == :search
+                @input_buffer += key
+            else
+                @git_url_buffer += key
+            end
           @cursor_pos = 0
         end
       end
@@ -312,11 +332,17 @@ class TrySelector
     UI.puts "{dim_text}#{separator}"
 
     # Search input
-    UI.puts "{highlight}Search: {reset}#{@input_buffer}"
+    search_label = @active_input == :search ? "{highlight}Search: {text}" : "Search: "
+    UI.puts "#{search_label}#{@input_buffer}"
+
+    # Git URL input
+    git_label = @active_input == :git_url ? "{highlight}Git repository URL (optional): {text}" : "Git repository URL (optional): "
+    UI.puts "#{git_label}#{@git_url_buffer}"
+
     UI.puts "{dim_text}#{separator}"
 
     # Calculate visible window based on actual terminal height
-    max_visible = [term_height - 8, 3].max
+    max_visible = [term_height - 9, 3].max # -9 for header and input fields
     total_items = tries.length + 1  # +1 for "Create new"
 
     # Adjust scroll window
@@ -539,6 +565,10 @@ class TrySelector
     result
   end
 
+  def extract_repo_name_from_url(url)
+    url.split('/').last.gsub('.git', '')
+  end
+
   def handle_selection(try_dir)
     # Select existing try directory
     @selected = { type: :cd, path: try_dir[:path] }
@@ -547,12 +577,16 @@ class TrySelector
   def handle_create_new
     # Create new try directory
     date_prefix = Time.now.strftime("%Y-%m-%d")
+    final_name = nil
+    action = { type: :mkdir } # default action
 
-    # If user already typed a name, use it directly
-    if !@input_buffer.empty?
+    if !@git_url_buffer.empty?
+      repo_name = extract_repo_name_from_url(@git_url_buffer)
+      name_part = @input_buffer.empty? ? repo_name : "#{@input_buffer}-#{repo_name}"
+      final_name = "#{date_prefix}-#{name_part}".gsub(/\s+/, '-')
+      action = { type: :mkdir_and_clone, git_url: @git_url_buffer }
+    elsif !@input_buffer.empty?
       final_name = "#{date_prefix}-#{@input_buffer}".gsub(/\s+/, '-')
-      full_path = File.join(@base_path, final_name)
-      @selected = { type: :mkdir, path: full_path }
     else
       # No name typed, prompt for one
       suggested_name = ""
@@ -570,13 +604,19 @@ class TrySelector
       end
 
       if entry.empty?
-        return { type: :cancel, path: nil  }
+        @selected = { type: :cancel, path: nil }
+        return
       end
 
       final_name = "#{date_prefix}-#{entry}".gsub(/\s+/, '-')
-      full_path = File.join(@base_path, final_name)
+    end
 
-      @selected = { type: :mkdir, path: full_path }
+    full_path = File.join(@base_path, final_name)
+
+    if Dir.exist?(full_path)
+      @selected = { type: :error, message: "Directory '#{final_name}' already exists." }
+    else
+      @selected = action.merge(path: full_path)
     end
   end
 
@@ -717,13 +757,31 @@ if __FILE__ == $0
     result = selector.run
 
     if result
-      parts = []
-      parts << (fish? ? "set -l dir '#{result[:path]}'" : "dir='#{result[:path]}'")
-      parts << "mkdir -p \"$dir\"" if result[:type] == :mkdir
-      parts << "touch \"$dir\""
-      parts << "cd \"$dir\""
-      puts parts.join(" \\\n  && ")
+      case result[:type]
+      when :error
+        puts "echo \"Error: #{result[:message]}\""
+        exit 1
+      when :cancel
+        exit 0 # Success, but do nothing.
+      when :cd, :mkdir, :mkdir_and_clone
+        parts = []
+        parts << (fish? ? "set -l dir '#{result[:path]}'" : "dir='#{result[:path]}'")
+        case result[:type]
+        when :mkdir
+          # create directory and touch to ensure it exists
+          parts << "mkdir -p \"$dir\""
+          parts << "touch \"$dir\""
+        when :mkdir_and_clone
+          # create directory, clone repo into it
+          parts << "mkdir -p \"$dir\""
+          parts << "cd \"$dir\""
+          parts << "git clone '#{result[:git_url]}' ."
+        end
+        parts << "cd \"$dir\""
+        puts parts.join(" \\\n  && ")
+      end
     end
+
   else
     warn "Unknown command: #{command}"
     print_global_help
