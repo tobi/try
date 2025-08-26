@@ -555,7 +555,12 @@ if __FILE__ == $0
 
         {highlight}eval "$(#$0 init ~/src/tries)"{reset}
 
-      {h2}Usage:{reset}
+      for fish shell, add to ~/.config/fish/config.fish:
+
+        {highlight}eval "$(#$0 init ~/src/tries | string collect)"{text}
+
+      {h2}Usage:{text}
+ 
         init [--path PATH]  # Initialize shell function for aliasing
         cd [QUERY]          # Interactive selector; prints shell cd commands
 
@@ -589,6 +594,10 @@ if __FILE__ == $0
   tries_path = extract_option_with_value!(ARGV, '--path') || TrySelector::TRY_PATH
   tries_path = File.expand_path(tries_path)
 
+  def fish?
+    ENV['SHELL']&.include?('fish')
+  end
+
   case command
   when nil
     print_global_help
@@ -602,13 +611,24 @@ if __FILE__ == $0
     end
 
     path_arg = tries_path ? " --path \"#{tries_path}\"" : ""
-    puts <<~SHELL
+    bash_or_zsh_script = <<~SHELL
       try() {
         script_path='#{script_path}';
         cmd=$(/usr/bin/env ruby "$script_path" cd#{path_arg} "$@" 2>/dev/tty);
         [ $? -eq 0 ] && eval "$cmd" || echo "$cmd";
       }
     SHELL
+
+    fish_script = <<~SHELL
+      function try
+        set -l script_path "#{script_path}"
+        set -l cmd (/usr/bin/env ruby "$script_path" cd#{path_arg} $argv 2>/dev/tty | string collect)
+        test $status -eq 0 && eval $cmd || echo $cmd
+      end
+    SHELL
+
+    puts fish? ? fish_script : bash_or_zsh_script
+
     exit 0
   when 'cd'
     search_term = ARGV.join(' ')
@@ -617,7 +637,7 @@ if __FILE__ == $0
 
     if result
       parts = []
-      parts << "dir='#{result[:path]}'"
+      parts << (fish? ? "set -l dir '#{result[:path]}'" : "dir='#{result[:path]}'")
       parts << "mkdir -p \"$dir\"" if result[:type] == :mkdir
       parts << "touch \"$dir\""
       parts << "cd \"$dir\""
