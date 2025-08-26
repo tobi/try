@@ -99,13 +99,29 @@ class TrySelector
 
   def initialize(search_term = "", base_path: TRY_PATH)
     words = search_term.split(/\s+/)
+    
+    # Check for git URLs
     git_url = words.find { |w| w =~ /\A(https?:|git@).*\.git\z/ }
+    
+    # Check for archive URLs (remote or local)
+    archive_url = words.find { |w| 
+      # Remote archive URLs
+      w =~ /\A(https?:).*\.(zip|tar\.gz|tgz|7z)\z/ ||
+      # Local archive files
+      (w.start_with?('/', '~/', './') && w =~ /\.(zip|tar\.gz|tgz|7z)\z/)
+    }
 
     if git_url
       @git_url_buffer = git_url
+      @archive_buffer = ""
       @search_term = (words - [git_url]).join('-')
+    elsif archive_url
+      @git_url_buffer = ""
+      @archive_buffer = archive_url
+      @search_term = (words - [archive_url]).join('-')
     else
       @git_url_buffer = ""
+      @archive_buffer = ""
       @search_term = search_term.gsub(/\s+/, '-')
     end
     @cursor_pos = 0
@@ -277,7 +293,14 @@ class TrySelector
       when "\e[B", "\x0E"  # Down arrow or Ctrl-N
         @cursor_pos = [@cursor_pos + 1, total_items - 1].min
       when "\t" # Tab
-        @active_input = @active_input == :search ? :git_url : :search
+        case @active_input
+        when :search
+          @active_input = :git_url
+        when :git_url
+          @active_input = :archive
+        when :archive
+          @active_input = :search
+        end
       when "\e[C"  # Right arrow - ignore
         # Do nothing
       when "\e[D"  # Left arrow - ignore
@@ -291,10 +314,13 @@ class TrySelector
         end
         break if @selected
       when "\x7F", "\b"  # Backspace
-        if @active_input == :search
-            @input_buffer = @input_buffer[0...@input_buffer.length - 1] if @input_buffer.length > 0
-        else
-            @git_url_buffer = @git_url_buffer[0...@git_url_buffer.length - 1] if @git_url_buffer.length > 0
+        case @active_input
+        when :search
+          @input_buffer = @input_buffer[0...@input_buffer.length - 1] if @input_buffer.length > 0
+        when :git_url
+          @git_url_buffer = @git_url_buffer[0...@git_url_buffer.length - 1] if @git_url_buffer.length > 0
+        when :archive
+          @archive_buffer = @archive_buffer[0...@archive_buffer.length - 1] if @archive_buffer.length > 0
         end
         @cursor_pos = 0
       when "\x04"  # Ctrl-D
@@ -306,12 +332,15 @@ class TrySelector
         break
       when String
         # Only accept printable characters, not escape sequences
-        if key.length == 1 && key =~ /[a-zA-Z0-9\-_\.\/:@]/ 
-            if @active_input == :search
-                @input_buffer += key
-            else
-                @git_url_buffer += key
-            end
+        if key.length == 1 && key =~ /[a-zA-Z0-9\-_\.\/:@~]/ 
+          case @active_input
+          when :search
+            @input_buffer += key
+          when :git_url
+            @git_url_buffer += key
+          when :archive
+            @archive_buffer += key
+          end
           @cursor_pos = 0
         end
       end
@@ -339,10 +368,14 @@ class TrySelector
     git_label = @active_input == :git_url ? "{highlight}Git repository URL (optional): {text}" : "Git repository URL (optional): "
     UI.puts "#{git_label}#{@git_url_buffer}"
 
+    # Archive input
+    archive_label = @active_input == :archive ? "{highlight}Archive URL/Path (zip/tar.gz/tgz/7z): {text}" : "Archive URL/Path (zip/tar.gz/tgz/7z): "
+    UI.puts "#{archive_label}#{@archive_buffer}"
+
     UI.puts "{dim_text}#{separator}"
 
     # Calculate visible window based on actual terminal height
-    max_visible = [term_height - 9, 3].max # -9 for header and input fields
+    max_visible = [term_height - 10, 3].max # -10 for header and input fields
     total_items = tries.length + 1  # +1 for "Create new"
 
     # Adjust scroll window
@@ -569,6 +602,13 @@ class TrySelector
     url.split('/').last.gsub('.git', '')
   end
 
+  def extract_archive_name_from_path(path)
+    # Extract filename from path and remove archive extensions
+    filename = File.basename(path)
+    # Remove extensions: .zip, .tar.gz, .tgz, .7z
+    filename.gsub(/\.(zip|tar\.gz|tgz|7z)$/, '')
+  end
+
   def handle_selection(try_dir)
     # Select existing try directory
     @selected = { type: :cd, path: try_dir[:path] }
@@ -585,6 +625,11 @@ class TrySelector
       name_part = @input_buffer.empty? ? repo_name : "#{@input_buffer}-#{repo_name}"
       final_name = "#{date_prefix}-#{name_part}".gsub(/\s+/, '-')
       action = { type: :mkdir_and_clone, git_url: @git_url_buffer }
+    elsif !@archive_buffer.empty?
+      archive_name = extract_archive_name_from_path(@archive_buffer)
+      name_part = @input_buffer.empty? ? archive_name : "#{@input_buffer}-#{archive_name}"
+      final_name = "#{date_prefix}-#{name_part}".gsub(/\s+/, '-')
+      action = { type: :mkdir_and_extract, archive_path: @archive_buffer }
     elsif !@input_buffer.empty?
       final_name = "#{date_prefix}-#{@input_buffer}".gsub(/\s+/, '-')
     else
@@ -763,7 +808,7 @@ if __FILE__ == $0
         exit 1
       when :cancel
         exit 0 # Success, but do nothing.
-      when :cd, :mkdir, :mkdir_and_clone
+      when :cd, :mkdir, :mkdir_and_clone, :mkdir_and_extract
         parts = []
         parts << (fish? ? "set -l dir '#{result[:path]}'" : "dir='#{result[:path]}'")
         case result[:type]
@@ -776,6 +821,39 @@ if __FILE__ == $0
           parts << "mkdir -p \"$dir\""
           parts << "cd \"$dir\""
           parts << "git clone '#{result[:git_url]}' ."
+        when :mkdir_and_extract
+          # create directory, extract archive into it
+          parts << "mkdir -p \"$dir\""
+          parts << "cd \"$dir\""
+          
+          archive_path = result[:archive_path]
+          if archive_path =~ /^https?:/
+            # Remote archive - download first
+            case archive_path
+            when /\.zip$/
+              parts << "curl -L '#{archive_path}' -o archive.zip && unzip -q archive.zip && rm archive.zip"
+              # If archive contains a single directory, move contents up
+              parts << "if [ $(ls -1 | wc -l) -eq 1 ] && [ -d \"$(ls -1)\" ]; then mv \"$(ls -1)\"/* . && mv \"$(ls -1)\"/.[^.]* . 2>/dev/null; rmdir \"$(ls -1)\"; fi"
+            when /\.tar\.gz$|\.tgz$/
+              parts << "curl -L '#{archive_path}' | tar xzf - --strip-components=1"
+            when /\.7z$/
+              parts << "curl -L '#{archive_path}' -o archive.7z && 7z x archive.7z && rm archive.7z"
+              parts << "if [ $(ls -1 | wc -l) -eq 1 ] && [ -d \"$(ls -1)\" ]; then mv \"$(ls -1)\"/* . && mv \"$(ls -1)\"/.[^.]* . 2>/dev/null; rmdir \"$(ls -1)\"; fi"
+            end
+          else
+            # Local archive
+            expanded_path = archive_path.start_with?('~') ? File.expand_path(archive_path) : archive_path
+            case archive_path
+            when /\.zip$/
+              parts << "unzip -q '#{expanded_path}'"
+              parts << "if [ $(ls -1 | wc -l) -eq 1 ] && [ -d \"$(ls -1)\" ]; then mv \"$(ls -1)\"/* . && mv \"$(ls -1)\"/.[^.]* . 2>/dev/null; rmdir \"$(ls -1)\"; fi"
+            when /\.tar\.gz$|\.tgz$/
+              parts << "tar xzf '#{expanded_path}' --strip-components=1"
+            when /\.7z$/
+              parts << "7z x '#{expanded_path}'"
+              parts << "if [ $(ls -1 | wc -l) -eq 1 ] && [ -d \"$(ls -1)\" ]; then mv \"$(ls -1)\"/* . && mv \"$(ls -1)\"/.[^.]* . 2>/dev/null; rmdir \"$(ls -1)\"; fi"
+            end
+          end
         end
         parts << "cd \"$dir\""
         puts parts.join(" \\\n  && ")
