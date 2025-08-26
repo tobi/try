@@ -638,7 +638,7 @@ if __FILE__ == $0
 
       for fish shell, add to ~/.config/fish/config.fish:
 
-        {highlight}eval "$(#$0 init ~/src/tries | string collect)"{text}
+        {highlight}eval "$(#$0 init ~/src/tries | string collect)"{reset}
 
       {h2}Usage:{text}
 
