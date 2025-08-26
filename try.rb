@@ -5,6 +5,61 @@ require 'time'
 require 'fileutils'
 ## Removed optparse; we'll manually parse CLI args
 
+# Lightweight token-based printer for all UI output
+module UI
+  TOKEN_MAP = {
+    '{text}' => "\e[39m",
+    '{dim_text}' => "\e[90m",
+    '{h1}' => "\e[1;33m",
+    '{h2}' => "\e[1;36m",
+    '{highlight}' => "\e[1;33m",
+    '{reset}' => "\e[0m\e[39m\e[49m", '{reset_bg}' => "\e[49m",
+    '{clear_screen}' => "\e[2J", '{clear_line}' => "\e[2K", '{home}' => "\e[H",
+    '{hide_cursor}' => "\e[?25l", '{show_cursor}' => "\e[?25h",
+    '{start_selected}' => "\e[6m",
+    '{end_selected}' => "\e[0m"
+  }.freeze
+
+  def self.print(text, io: STDERR)
+    return if text.nil?
+
+    io.print(
+      text.gsub(/\{.*?\}/) do |match|
+        TOKEN_MAP.fetch(match) { raise "Unknown token: #{match}" }
+      end
+    )
+  end
+
+  def self.puts(text = "", io: STDERR)
+    self.print("#{text}{reset}\r\n", io: io)
+  end
+
+  def self.cls
+    self.print "{clear_screen}{home}"
+  end
+
+  def self.read_key
+    input = STDIN.getc
+
+    if input == "\e"
+      input << STDIN.read_nonblock(3) rescue ""
+      input << STDIN.read_nonblock(2) rescue ""
+    end
+
+    input
+  end
+
+  def self.height
+    h = `tput lines 2>/dev/null`.strip.to_i
+    h > 0 ? h : 24
+  end
+
+  def self.width
+    w = `tput cols 2>/dev/null`.strip.to_i
+    w > 0 ? w : 80
+  end
+end
+
 class TrySelector
   TRY_PATH = ENV['TRY_PATH'] || File.expand_path("~/src/tries")
 
@@ -14,8 +69,6 @@ class TrySelector
     @scroll_offset = 0
     @input_buffer = @search_term
     @selected = nil
-    @term_width = 80
-    @term_height = 24
     @all_trials = nil  # Memoized trials
     @base_path = base_path
 
@@ -29,7 +82,7 @@ class TrySelector
 
     # Check if we have a TTY
     if !STDIN.tty? || !STDERR.tty?
-      STDERR.puts "Error: try requires an interactive terminal"
+      UI.puts "Error: try requires an interactive terminal"
       return nil
     end
 
@@ -43,24 +96,14 @@ class TrySelector
   private
 
   def setup_terminal
-    update_terminal_size
-    ui_print "{hide_cursor}{clear_screen}{home}"
-  end
-
-  def update_terminal_size
-    # Use tput which works reliably
-    @term_height = `tput lines 2>/dev/null`.strip.to_i
-    @term_width = `tput cols 2>/dev/null`.strip.to_i
-
-    # Fallback to reasonable defaults if tput fails
-    @term_height = 24 if @term_height <= 0
-    @term_width = 80 if @term_width <= 0
+    UI.cls
+    UI.print "{hide_cursor}"
   end
 
   def restore_terminal
     # Clear screen completely before restoring
-    ui_print "{clear_screen}{home}"
-    ui_print "{show_cursor}"
+    UI.cls
+    UI.print "{show_cursor}"
   end
 
   def load_all_tries
@@ -182,7 +225,7 @@ class TrySelector
 
       render(tries)
 
-      key = read_key
+      key = UI.read_key
 
       case key
       when "\e[A", "\x10"  # Up arrow or Ctrl-P
@@ -219,35 +262,27 @@ class TrySelector
     @selected
   end
 
-  def read_key
-    input = STDIN.getc
-
-    if input == "\e"
-      input << STDIN.read_nonblock(3) rescue nil
-      input << STDIN.read_nonblock(2) rescue nil
-    end
-
-    input
-  end
-
   def render(tries)
     # All UI output goes to STDERR
     # Clear screen and move to top-left
-    ui_print "{clear_screen}{home}"
+    UI.cls
+
+    term_width = UI.width
+    term_height = UI.height
 
     # Use actual terminal width for separator lines
-    separator = "─" * (@term_width - 1)
+    separator = "─" * (term_width - 1)
 
     # Header
-    ui_print "{h1}📁 Try Directory Selection{text}\r\n"
-    ui_print "{dim_text}#{separator}{text}\r\n"
+    UI.puts "{h1}📁 Try Directory Selection"
+    UI.puts "{dim_text}#{separator}"
 
     # Search input
-    ui_print "{highlight}Search: {text}#{@input_buffer}\r\n"
-    ui_print "{dim_text}#{separator}{text}\r\n"
+    UI.puts "{highlight}Search: {reset}#{@input_buffer}"
+    UI.puts "{dim_text}#{separator}"
 
     # Calculate visible window based on actual terminal height
-    max_visible = [@term_height - 8, 3].max
+    max_visible = [term_height - 8, 3].max
     total_items = tries.length + 1  # +1 for "Create new"
 
     # Adjust scroll window
@@ -263,22 +298,22 @@ class TrySelector
     (@scroll_offset...visible_end).each do |idx|
       # Add blank line before "Create new"
       if idx == tries.length && tries.any? && idx >= @scroll_offset
-        ui_print "\r\n"
+        UI.puts
       end
 
       # Print cursor/selection indicator
       is_selected = idx == @cursor_pos
-      ui_print(is_selected ? "{highlight}→ {text}" : "  ")
+      UI.print(is_selected ? "{highlight}→ {reset}" : "  ")
 
       # Display try directory or "Create new" option
       if idx < tries.length
         try_dir = tries[idx]
 
         # Render the folder icon (always outside selection)
-        ui_print "📁 "
+        UI.print "📁 "
 
         # Start selection highlighting after icon
-        ui_print "{start_selected}" if is_selected
+        UI.print "{start_selected}" if is_selected
 
         # Format directory name with date styling
         if try_dir[:basename] =~ /^(\d{4}-\d{2}-\d{2})-(.+)$/
@@ -286,21 +321,21 @@ class TrySelector
           name_part = $2
 
           # Render the date part (faint)
-          ui_print "{dim_text}#{date_part}{text}"
+          UI.print "{dim_text}#{date_part}{reset}"
 
           # Render the separator (very faint)
           separator_matches = !@input_buffer.empty? && @input_buffer.include?('-')
           if separator_matches
-            ui_print "{highlight}-{text}"
+            UI.print "{highlight}-{reset}"
           else
-            ui_print "{dim_text}-{text}"
+            UI.print "{dim_text}-{reset}"
           end
 
           # Render the name part with match highlighting
           if !@input_buffer.empty?
-            ui_print highlight_matches_for_selection(name_part, @input_buffer, is_selected)
+            UI.print highlight_matches_for_selection(name_part, @input_buffer, is_selected)
           else
-            ui_print name_part
+            UI.print name_part
           end
 
           # Store plain text for width calculation
@@ -308,9 +343,9 @@ class TrySelector
         else
           # No date prefix - render folder icon then content
           if !@input_buffer.empty?
-            ui_print highlight_matches_for_selection(try_dir[:basename], @input_buffer, is_selected)
+            UI.print highlight_matches_for_selection(try_dir[:basename], @input_buffer, is_selected)
           else
-            ui_print try_dir[:basename]
+            UI.print try_dir[:basename]
           end
           display_text = try_dir[:basename]
         end
@@ -325,18 +360,18 @@ class TrySelector
         # Calculate padding (account for icon being outside selection)
         meta_width = meta_text.length + 1  # +1 for space before meta
         text_width = display_text.length  # Plain text width
-        padding_needed = @term_width - 5 - text_width - meta_width  # -5 for arrow + icon + space
+        padding_needed = term_width - 5 - text_width - meta_width  # -5 for arrow + icon + space
         padding = " " * [padding_needed, 1].max
 
         # Print padding and metadata
-        ui_print padding
-        ui_print " {dim_text}#{meta_text}{text}"
+        UI.print padding
+        UI.print " {dim_text}#{meta_text}{reset}"
 
       else
         # This is the "Create new" option
-        ui_print "+ "  # Plus sign outside selection
+        UI.print "+ "  # Plus sign outside selection
 
-        ui_print "{start_selected}" if is_selected
+        UI.print "{start_selected}" if is_selected
 
         display_text = if @input_buffer.empty?
           "Create new"
@@ -344,28 +379,28 @@ class TrySelector
           "Create new: #{@input_buffer}"
         end
 
-        ui_print display_text
+        UI.print display_text
 
         # Pad to full width
         text_width = display_text.length
-        padding_needed = @term_width - 5 - text_width  # -5 for arrow + "+ "
-        ui_print " " * [padding_needed, 1].max
+        padding_needed = term_width - 5 - text_width  # -5 for arrow + "+ "
+        UI.print " " * [padding_needed, 1].max
       end
 
       # End selection and reset all formatting
-      ui_print "{end_selected}{text}"
-      ui_print "\r\n"
+      UI.print "{end_selected}"
+      UI.puts
     end
 
     # Scroll indicator if needed
     if total_items > max_visible
-      ui_print "{dim_text}#{separator}{text}\r\n"
-      ui_print "{dim_text}[#{@scroll_offset + 1}-#{visible_end}/#{total_items}]{text}\r\n"
+      UI.puts "{dim_text}#{separator}"
+      UI.puts "{dim_text}[#{@scroll_offset + 1}-#{visible_end}/#{total_items}]"
     end
 
     # Instructions at bottom
-    ui_print "{dim_text}#{separator}{text}\r\n"
-    ui_print "{dim_text}↑↓: Navigate  Enter: Select  ESC: Cancel{text}"
+    UI.puts "{dim_text}#{separator}"
+    UI.print "{dim_text}↑↓: Navigate  Enter: Select  ESC: Cancel{reset}"
 
     # Flush output
     STDERR.flush
@@ -480,11 +515,11 @@ class TrySelector
       # No name typed, prompt for one
       suggested_name = ""
 
-      ui_print "{clear_screen}{home}"
-      ui_print "{h2}Enter new try name{text}\r\n"
-      ui_print "> {dim_text}#{date_prefix}-{text}#{suggested_name}"
+      UI.cls
+      UI.puts "{h2}Enter new try name"
+      UI.print "> {dim_text}#{date_prefix}-{reset}#{suggested_name}"
 
-      ui_print "{show_cursor}"
+      UI.print "{show_cursor}"
       STDOUT.flush
 
       entry = ""
@@ -509,61 +544,25 @@ end
 # Main execution with OptionParser subcommands
 if __FILE__ == $0
 
-  # Global, token-aware printer for ANSI/UI output
-  # Minimal semantic tokens:
-  #  {text}        Reset to default foreground (keeps background)
-  #  {dim_text}    Dim/gray foreground
-  #  {h1}          Primary heading (bold + yellow)
-  #  {h2}          Secondary heading (dim yellow)
-  #  {highlight}   Emphasis (bold + yellow)
-  #  {start_selected}/{end_selected}  Selection background on/off
-  # Utility tokens (rare): {reset}, {reset_bg}, {clear_screen}, {clear_line}, {home}, {hide_cursor}, {show_cursor}
-  def ui_print(text, io: STDERR)
-    return if text.nil?
-    $token_map ||= {
-      # semantic foreground styles
-      # '{text}' => "\e[39m",
-      '{text}' => "\e[39m",
-      '{dim_text}' => "\e[90m",
-      '{h1}' => "\e[1;33m",
-      '{h2}' => "\e[1;36m",
-      '{highlight}' => "\e[1;33m",
-      # resets/util
-      '{reset}' => "\e[0m", '{reset_bg}' => "\e[49m",
-      # screen/cursor
-      '{clear_screen}' => "\e[2J", '{clear_line}' => "\e[2K", '{home}' => "\e[H",
-      '{hide_cursor}' => "\e[?25l", '{show_cursor}' => "\e[?25h",
-      # Selection background: faint
-      '{start_selected}' => "\e[6m",
-      '{end_selected}' => "\e[0m"
-    }
-
-    io.print(
-      text.gsub(/\{.*?\}/) do |match|
-        $token_map.fetch(match) { raise "Unknown token: #{match}" }
-      end
-    )
-  end
-
   def print_global_help
-    ui_print <<~HELP
-      {h1}try something!{text}
+    UI.print <<~HELP
+      {h1}try something!{reset}
 
       Lightweight experiments for people with ADHD
 
       this tool is not meant to be used directly,
       but added to your ~/.zshrc or ~/.bashrc:
 
-        {highlight}eval "$(#$0 init ~/src/tries)"{text}
+        {highlight}eval "$(#$0 init ~/src/tries)"{reset}
 
-      {h2}Usage:{text}
+      {h2}Usage:{reset}
         init [--path PATH]  # Initialize shell function for aliasing
         cd [QUERY]          # Interactive selector; prints shell cd commands
 
 
-      {h2}Defaults:{text}
-        Default path: {dim_text}~/src/tries{text} (override with --path on commands)
-        Current default: {dim_text}#{TrySelector::TRY_PATH}{text}
+      {h2}Defaults:{reset}
+        Default path: {dim_text}~/src/tries{reset} (override with --path on commands)
+        Current default: {dim_text}#{TrySelector::TRY_PATH}{reset}
     HELP
   end
 
