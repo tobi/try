@@ -3,7 +3,6 @@
 require 'io/console'
 require 'time'
 require 'fileutils'
-## Removed optparse; we'll manually parse CLI args
 
 # Lightweight token-based printer for all UI output with double buffering
 module UI
@@ -67,10 +66,11 @@ module UI
     io.flush
   end
 
-  def self.cls
+  def self.cls(io: STDERR)
     @@buffer.clear
     @@current_line = ""
     @@last_buffer.clear
+    io.print("\e[2J\e[H")  # Clear screen and go home
   end
 
   def self.read_key
@@ -106,6 +106,7 @@ class TrySelector
     @selected = nil
     @all_trials = nil  # Memoized trials
     @base_path = base_path
+    @delete_status = nil  # Status message for deletions
 
     FileUtils.mkdir_p(@base_path) unless Dir.exist?(@base_path)
   end
@@ -281,6 +282,10 @@ class TrySelector
       when "\x7F", "\b"  # Backspace
         @input_buffer = @input_buffer[0...-1] if @input_buffer.length > 0
         @cursor_pos = 0
+      when "\x04"  # Ctrl-D
+        if @cursor_pos < tries.length
+          handle_delete(tries[@cursor_pos])
+        end
       when "\x03", "\e"  # Ctrl-C or ESC
         @selected = nil
         break
@@ -430,7 +435,14 @@ class TrySelector
 
     # Instructions at bottom
     UI.puts "{dim_text}#{separator}"
-    UI.puts "{dim_text}↑↓: Navigate  Enter: Select  ESC: Cancel{reset}"
+
+    # Show delete status if present, otherwise show instructions
+    if @delete_status
+      UI.puts "{highlight}#{@delete_status}{reset}"
+      @delete_status = nil  # Clear after showing
+    else
+      UI.puts "{dim_text}↑↓: Navigate  Enter: Select  Ctrl-D: Delete  ESC: Cancel{reset}"
+    end
 
     # Flush the double buffer
     UI.flush
@@ -545,12 +557,10 @@ class TrySelector
       # No name typed, prompt for one
       suggested_name = ""
 
-      UI.cls
+      STDERR.print("\e[2J\e[H\e[?25h")  # Clear, home, show cursor
       UI.puts "{h2}Enter new try name"
       UI.print "> {dim_text}#{date_prefix}-{reset}#{suggested_name}"
-
-      UI.print "{show_cursor}"
-      STDOUT.flush
+      UI.flush
 
       entry = ""
       # Read user input in cooked mode
@@ -568,6 +578,47 @@ class TrySelector
 
       @selected = { type: :mkdir, path: full_path }
     end
+  end
+
+  def handle_delete(try_dir)
+    # Show delete confirmation dialog
+
+    size = `du -sh #{try_dir[:path]}`.strip.split(/\s+/).first rescue "???"
+    files = `find #{try_dir[:path]} -type f | wc -l`.strip.split(/\s+/).first rescue "???"
+
+    UI.cls
+    UI.puts "{h2}Delete Directory"
+    UI.puts
+    UI.puts "Are you sure you want to delete: {highlight}#{try_dir[:basename]}{reset}"
+    UI.puts "  {dim_text}in #{try_dir[:path]}{reset}"
+    UI.puts "  {dim_text}files: #{files} files{reset}"
+    UI.puts "  {dim_text}size: #{size}{reset}"
+    UI.puts
+    UI.puts "{highlight}Type {text}YES{highlight} to confirm: "
+    UI.flush
+    STDERR.print("\e[?25h")  # Show cursor after flushing
+
+    confirmation = ""
+    # Read user input in cooked mode
+    STDERR.cooked do
+      STDIN.iflush
+      confirmation = gets.chomp
+    end
+
+    if confirmation == "YES"
+      begin
+        FileUtils.rm_rf(try_dir[:path])
+        @delete_status = "Deleted: #{try_dir[:basename]}"
+        @all_tries = nil  # Clear cache to reload tries
+      rescue => e
+        @delete_status = "Error: #{e.message}"
+      end
+    else
+      @delete_status = "Delete cancelled"
+    end
+
+    # Hide cursor again for main UI
+    STDERR.print("\e[?25l")
   end
 end
 
