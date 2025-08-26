@@ -5,7 +5,7 @@ require 'time'
 require 'fileutils'
 ## Removed optparse; we'll manually parse CLI args
 
-# Lightweight token-based printer for all UI output
+# Lightweight token-based printer for all UI output with double buffering
 module UI
   TOKEN_MAP = {
     '{text}' => "\e[39m",
@@ -14,28 +14,63 @@ module UI
     '{h2}' => "\e[1;36m",
     '{highlight}' => "\e[1;33m",
     '{reset}' => "\e[0m\e[39m\e[49m", '{reset_bg}' => "\e[49m",
-    '{clear_screen}' => "\e[2J", '{clear_line}' => "\e[2K", '{home}' => "\e[H",
+    '{clear_screen}' => "\e[2J", '{clear_line}' => "\e[2K", '{home}' => "\e[H", '{clear_below}' => "\e[0J",
     '{hide_cursor}' => "\e[?25l", '{show_cursor}' => "\e[?25h",
     '{start_selected}' => "\e[6m",
     '{end_selected}' => "\e[0m"
   }.freeze
 
+  @@buffer = []
+  @@last_buffer = []
+  @@current_line = ""
+
   def self.print(text, io: STDERR)
     return if text.nil?
-
-    io.print(
-      text.gsub(/\{.*?\}/) do |match|
-        TOKEN_MAP.fetch(match) { raise "Unknown token: #{match}" }
-      end
-    )
+    @@current_line += text
   end
 
   def self.puts(text = "", io: STDERR)
-    self.print("#{text}{reset}\r\n", io: io)
+    @@current_line += text
+    @@buffer << @@current_line
+    @@current_line = ""
+  end
+
+  def self.flush(io: STDERR)
+    # Position cursor at home
+    io.print("\e[H")
+
+    max_lines = [@@buffer.length, @@last_buffer.length].max
+    reset = TOKEN_MAP['{reset}']
+
+    (0...max_lines).each do |i|
+      current_line = @@buffer[i] || ""
+      last_line = @@last_buffer[i] || ""
+
+      if current_line != last_line
+        # Move to line and clear it, then write new content
+        io.print("\e[#{i + 1};1H\e[2K")
+        if !current_line.empty?
+          processed_line = current_line.gsub(/\{.*?\}/) do |match|
+            TOKEN_MAP.fetch(match) { raise "Unknown token: #{match}" }
+          end
+          io.print(processed_line)
+          io.print(reset)
+        end
+      end
+    end
+
+    # Store current buffer as last buffer for next comparison
+    @@last_buffer = @@buffer.dup
+    @@buffer.clear
+    @@current_line = ""
+
+    io.flush
   end
 
   def self.cls
-    self.print "{clear_screen}{home}"
+    @@buffer.clear
+    @@current_line = ""
+    @@last_buffer.clear
   end
 
   def self.read_key
@@ -97,13 +132,12 @@ class TrySelector
 
   def setup_terminal
     UI.cls
-    UI.print "{hide_cursor}"
+    STDERR.print("\e[2J\e[H\e[?25l")  # Direct clear screen, home, hide cursor
   end
 
   def restore_terminal
     # Clear screen completely before restoring
-    UI.cls
-    UI.print "{show_cursor}"
+    STDERR.print("\e[2J\e[H\e[?25h")  # Direct clear, home, show cursor
   end
 
   def load_all_tries
@@ -263,10 +297,6 @@ class TrySelector
   end
 
   def render(tries)
-    # All UI output goes to STDERR
-    # Clear screen and move to top-left
-    UI.cls
-
     term_width = UI.width
     term_height = UI.height
 
@@ -400,10 +430,10 @@ class TrySelector
 
     # Instructions at bottom
     UI.puts "{dim_text}#{separator}"
-    UI.print "{dim_text}↑↓: Navigate  Enter: Select  ESC: Cancel{reset}"
+    UI.puts "{dim_text}↑↓: Navigate  Enter: Select  ESC: Cancel{reset}"
 
-    # Flush output
-    STDERR.flush
+    # Flush the double buffer
+    UI.flush
   end
 
 
@@ -560,7 +590,7 @@ if __FILE__ == $0
         {highlight}eval "$(#$0 init ~/src/tries | string collect)"{text}
 
       {h2}Usage:{text}
- 
+
         init [--path PATH]  # Initialize shell function for aliasing
         cd [QUERY]          # Interactive selector; prints shell cd commands
 
