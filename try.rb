@@ -106,6 +106,7 @@ class TrySelector
     @all_trials = nil  # Memoized trials
     @base_path = base_path
     @delete_status = nil  # Status message for deletions
+    @should_terminate = false  # Flag for graceful termination
 
     FileUtils.mkdir_p(@base_path) unless Dir.exist?(@base_path)
   end
@@ -251,6 +252,9 @@ class TrySelector
 
   def main_loop
     loop do
+      # Check for termination flag
+      break if @should_terminate
+
       tries = get_tries
       total_items = tries.length + 1  # +1 for "Create new" option
 
@@ -286,7 +290,7 @@ class TrySelector
           handle_delete(tries[@cursor_pos])
         end
       when "\x03", "\e"  # Ctrl-C or ESC
-        @selected = nil
+        @should_terminate = true
         break
       when String
         # Only accept printable characters, not escape sequences
@@ -566,9 +570,15 @@ class TrySelector
 
       entry = ""
       # Read user input in cooked mode
-      STDERR.cooked do
-        STDIN.iflush
-        entry = gets.chomp
+      begin
+        STDERR.cooked do
+          STDIN.iflush
+          entry = gets.chomp
+        end
+      rescue Interrupt
+        # Ctrl+C pressed - graceful termination
+        @should_terminate = true
+        return
       end
 
       if entry.empty?
@@ -602,9 +612,15 @@ class TrySelector
 
     confirmation = ""
     # Read user input in cooked mode
-    STDERR.cooked do
-      STDIN.iflush
-      confirmation = gets.chomp
+    begin
+      STDERR.cooked do
+        STDIN.iflush
+        confirmation = gets.chomp
+      end
+    rescue Interrupt
+      # Ctrl+C pressed - graceful termination
+      @should_terminate = true
+      return
     end
 
     if confirmation == "YES"
