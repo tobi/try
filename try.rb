@@ -12,11 +12,10 @@ module UI
     '{h1}' => "\e[1;33m",
     '{h2}' => "\e[1;36m",
     '{highlight}' => "\e[1;33m",
-    '{reset}' => "\e[0m\e[39m\e[49m", '{reset_bg}' => "\e[49m",
+    '{reset}' => "\e[0m\e[39m\e[49m", '{reset_bg}' => "\e[49m", '{reset_fg}' => "\e[39m",
     '{clear_screen}' => "\e[2J", '{clear_line}' => "\e[2K", '{home}' => "\e[H", '{clear_below}' => "\e[0J",
     '{hide_cursor}' => "\e[?25l", '{show_cursor}' => "\e[?25h",
-    '{start_selected}' => "\e[6m",
-    '{end_selected}' => "\e[0m"
+    '{start_selected}' => "\e[1m", '{end_selected}' => "\e[0m", '{bold}' => "\e[1m"
   }.freeze
 
   @@buffer = []
@@ -338,7 +337,7 @@ class TrySelector
 
       # Print cursor/selection indicator
       is_selected = idx == @cursor_pos
-      UI.print(is_selected ? "{highlight}→ {reset}" : "  ")
+      UI.print(is_selected ? "{highlight}→ {reset_fg}" : "  ")
 
       # Display try directory or "Create new" option
       if idx < tries.length
@@ -356,15 +355,16 @@ class TrySelector
           name_part = $2
 
           # Render the date part (faint)
-          UI.print "{dim_text}#{date_part}{reset}"
+          UI.print "{dim_text}#{date_part}{reset_fg}"
 
           # Render the separator (very faint)
           separator_matches = !@input_buffer.empty? && @input_buffer.include?('-')
           if separator_matches
-            UI.print "{highlight}-{reset}"
+            UI.print "{highlight}-{reset_fg}"
           else
-            UI.print "{dim_text}-{reset}"
+            UI.print "{dim_text}-{reset_fg}"
           end
+
 
           # Render the name part with match highlighting
           if !@input_buffer.empty?
@@ -400,7 +400,8 @@ class TrySelector
 
         # Print padding and metadata
         UI.print padding
-        UI.print " {dim_text}#{meta_text}{reset}"
+        UI.print "{end_selected}" if is_selected
+        UI.print " {dim_text}#{meta_text}{reset_fg}"
 
       else
         # This is the "Create new" option
@@ -423,7 +424,6 @@ class TrySelector
       end
 
       # End selection and reset all formatting
-      UI.print "{end_selected}"
       UI.puts
     end
 
@@ -722,7 +722,7 @@ if __FILE__ == $0
       parts << "mkdir -p \"$dir\"" if result[:type] == :mkdir
       parts << "touch \"$dir\""
       parts << "cd \"$dir\""
-      puts parts.join(' && ')
+      puts parts.join(" \\\n  && ")
     end
   else
     warn "Unknown command: #{command}"
