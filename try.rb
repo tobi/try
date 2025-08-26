@@ -823,12 +823,12 @@ if __FILE__ == $0
             when /\.zip$/
               parts << "curl -L '#{archive_path}' -o archive.zip && unzip -q archive.zip && rm archive.zip"
               # If archive contains a single directory, move contents up
-              parts << "if [ $(ls -1 | wc -l) -eq 1 ] && [ -d \"$(ls -1)\" ]; then mv \"$(ls -1)\"/* . && mv \"$(ls -1)\"/.[^.]* . 2>/dev/null; rmdir \"$(ls -1)\"; fi"
+              parts << "shopt -s nullglob; items=(*); if [ ${#items[@]} -eq 1 ] && [ -d \"${items[0]}\" ]; then mv \"${items[0]}\"/* . 2>/dev/null; mv \"${items[0]}\"/.[^.]* . 2>/dev/null; rmdir \"${items[0]}\" 2>/dev/null; fi"
             when /\.tar\.gz$|\.tgz$/
               parts << "curl -L '#{archive_path}' | tar xzf - --strip-components=1"
             when /\.7z$/
               parts << "curl -L '#{archive_path}' -o archive.7z && 7z x archive.7z && rm archive.7z"
-              parts << "if [ $(ls -1 | wc -l) -eq 1 ] && [ -d \"$(ls -1)\" ]; then mv \"$(ls -1)\"/* . && mv \"$(ls -1)\"/.[^.]* . 2>/dev/null; rmdir \"$(ls -1)\"; fi"
+              parts << "shopt -s nullglob; items=(*); if [ ${#items[@]} -eq 1 ] && [ -d \"${items[0]}\" ]; then mv \"${items[0]}\"/* . 2>/dev/null; mv \"${items[0]}\"/.[^.]* . 2>/dev/null; rmdir \"${items[0]}\" 2>/dev/null; fi"
             end
           else
             # Local archive
@@ -836,12 +836,12 @@ if __FILE__ == $0
             case archive_path
             when /\.zip$/
               parts << "unzip -q '#{expanded_path}'"
-              parts << "if [ $(ls -1 | wc -l) -eq 1 ] && [ -d \"$(ls -1)\" ]; then mv \"$(ls -1)\"/* . && mv \"$(ls -1)\"/.[^.]* . 2>/dev/null; rmdir \"$(ls -1)\"; fi"
+              parts << "shopt -s nullglob; items=(*); if [ ${#items[@]} -eq 1 ] && [ -d \"${items[0]}\" ]; then mv \"${items[0]}\"/* . 2>/dev/null; mv \"${items[0]}\"/.[^.]* . 2>/dev/null; rmdir \"${items[0]}\" 2>/dev/null; fi"
             when /\.tar\.gz$|\.tgz$/
               parts << "tar xzf '#{expanded_path}' --strip-components=1"
             when /\.7z$/
               parts << "7z x '#{expanded_path}'"
-              parts << "if [ $(ls -1 | wc -l) -eq 1 ] && [ -d \"$(ls -1)\" ]; then mv \"$(ls -1)\"/* . && mv \"$(ls -1)\"/.[^.]* . 2>/dev/null; rmdir \"$(ls -1)\"; fi"
+              parts << "shopt -s nullglob; items=(*); if [ ${#items[@]} -eq 1 ] && [ -d \"${items[0]}\" ]; then mv \"${items[0]}\"/* . 2>/dev/null; mv \"${items[0]}\"/.[^.]* . 2>/dev/null; rmdir \"${items[0]}\" 2>/dev/null; fi"
             end
           end
         end
