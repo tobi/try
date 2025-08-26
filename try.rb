@@ -112,16 +112,13 @@ class TrySelector
     }
 
     if git_url
-      @git_url_buffer = git_url
-      @archive_buffer = ""
+      @url_buffer = git_url
       @search_term = (words - [git_url]).join('-')
     elsif archive_url
-      @git_url_buffer = ""
-      @archive_buffer = archive_url
+      @url_buffer = archive_url
       @search_term = (words - [archive_url]).join('-')
     else
-      @git_url_buffer = ""
-      @archive_buffer = ""
+      @url_buffer = ""
       @search_term = search_term.gsub(/\s+/, '-')
     end
     @cursor_pos = 0
@@ -293,14 +290,7 @@ class TrySelector
       when "\e[B", "\x0E"  # Down arrow or Ctrl-N
         @cursor_pos = [@cursor_pos + 1, total_items - 1].min
       when "\t" # Tab
-        case @active_input
-        when :search
-          @active_input = :git_url
-        when :git_url
-          @active_input = :archive
-        when :archive
-          @active_input = :search
-        end
+        @active_input = @active_input == :search ? :url : :search
       when "\e[C"  # Right arrow - ignore
         # Do nothing
       when "\e[D"  # Left arrow - ignore
@@ -314,13 +304,10 @@ class TrySelector
         end
         break if @selected
       when "\x7F", "\b"  # Backspace
-        case @active_input
-        when :search
+        if @active_input == :search
           @input_buffer = @input_buffer[0...@input_buffer.length - 1] if @input_buffer.length > 0
-        when :git_url
-          @git_url_buffer = @git_url_buffer[0...@git_url_buffer.length - 1] if @git_url_buffer.length > 0
-        when :archive
-          @archive_buffer = @archive_buffer[0...@archive_buffer.length - 1] if @archive_buffer.length > 0
+        else
+          @url_buffer = @url_buffer[0...@url_buffer.length - 1] if @url_buffer.length > 0
         end
         @cursor_pos = 0
       when "\x04"  # Ctrl-D
@@ -333,13 +320,10 @@ class TrySelector
       when String
         # Only accept printable characters, not escape sequences
         if key.length == 1 && key =~ /[a-zA-Z0-9\-_\.\/:@~]/ 
-          case @active_input
-          when :search
+          if @active_input == :search
             @input_buffer += key
-          when :git_url
-            @git_url_buffer += key
-          when :archive
-            @archive_buffer += key
+          else
+            @url_buffer += key
           end
           @cursor_pos = 0
         end
@@ -364,18 +348,14 @@ class TrySelector
     search_label = @active_input == :search ? "{highlight}Search: {text}" : "Search: "
     UI.puts "#{search_label}#{@input_buffer}"
 
-    # Git URL input
-    git_label = @active_input == :git_url ? "{highlight}Git repository URL (optional): {text}" : "Git repository URL (optional): "
-    UI.puts "#{git_label}#{@git_url_buffer}"
-
-    # Archive input
-    archive_label = @active_input == :archive ? "{highlight}Archive URL/Path (zip/tar.gz/tgz/7z): {text}" : "Archive URL/Path (zip/tar.gz/tgz/7z): "
-    UI.puts "#{archive_label}#{@archive_buffer}"
+    # Git/Archive URL input
+    url_label = @active_input == :url ? "{highlight}Git/Archive (git/zip/tar.gz/tgz/7z) URL: {text}" : "Git/Archive (git/zip/tar.gz/tgz/7z) URL: "
+    UI.puts "#{url_label}#{@url_buffer}"
 
     UI.puts "{dim_text}#{separator}"
 
     # Calculate visible window based on actual terminal height
-    max_visible = [term_height - 10, 3].max # -10 for header and input fields
+    max_visible = [term_height - 9, 3].max # -9 for header and input fields
     total_items = tries.length + 1  # +1 for "Create new"
 
     # Adjust scroll window
@@ -620,16 +600,26 @@ class TrySelector
     final_name = nil
     action = { type: :mkdir } # default action
 
-    if !@git_url_buffer.empty?
-      repo_name = extract_repo_name_from_url(@git_url_buffer)
-      name_part = @input_buffer.empty? ? repo_name : "#{@input_buffer}-#{repo_name}"
-      final_name = "#{date_prefix}-#{name_part}".gsub(/\s+/, '-')
-      action = { type: :mkdir_and_clone, git_url: @git_url_buffer }
-    elsif !@archive_buffer.empty?
-      archive_name = extract_archive_name_from_path(@archive_buffer)
-      name_part = @input_buffer.empty? ? archive_name : "#{@input_buffer}-#{archive_name}"
-      final_name = "#{date_prefix}-#{name_part}".gsub(/\s+/, '-')
-      action = { type: :mkdir_and_extract, archive_path: @archive_buffer }
+    if !@url_buffer.empty?
+      # Determine if it's a git URL or archive URL
+      if @url_buffer =~ /\A(https?:|git@).*\.git\z/
+        # Git URL
+        repo_name = extract_repo_name_from_url(@url_buffer)
+        name_part = @input_buffer.empty? ? repo_name : "#{@input_buffer}-#{repo_name}"
+        final_name = "#{date_prefix}-#{name_part}".gsub(/\s+/, '-')
+        action = { type: :mkdir_and_clone, git_url: @url_buffer }
+      elsif @url_buffer =~ /\A(https?:).*\.(zip|tar\.gz|tgz|7z)\z/ || 
+            (@url_buffer.start_with?('/', '~/', './') && @url_buffer =~ /\.(zip|tar\.gz|tgz|7z)\z/)
+        # Archive URL/path
+        archive_name = extract_archive_name_from_path(@url_buffer)
+        name_part = @input_buffer.empty? ? archive_name : "#{@input_buffer}-#{archive_name}"
+        final_name = "#{date_prefix}-#{name_part}".gsub(/\s+/, '-')
+        action = { type: :mkdir_and_extract, archive_path: @url_buffer }
+      else
+        # Invalid URL - treat as error
+        @selected = { type: :error, message: "Invalid URL format. Supported: .git, .zip, .tar.gz, .tgz, .7z" }
+        return
+      end
     elsif !@input_buffer.empty?
       final_name = "#{date_prefix}-#{@input_buffer}".gsub(/\s+/, '-')
     else
