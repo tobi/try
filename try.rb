@@ -841,7 +841,7 @@ if __FILE__ == $0
 
   # Keep dispatch tidy with small helpers
   def emit_script(parts)
-    puts parts.join(" \\\n+  && ")
+    puts parts.join(" \\\n  && ")
   end
 
   def dir_assign(path)
