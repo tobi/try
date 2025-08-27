@@ -12,8 +12,8 @@ class TestCreateNewAndDelete < Test::Unit::TestCase
   def test_create_new_generates_mkdir_script
     Dir.mktmpdir do |dir|
       stdout, _stderr, _status = run_cmd('cd', 'new-thing', '--and-keys', 'ENTER', '--path', dir)
-      assert_match(/mkdir -p \"\$dir\"/, stdout, 'should emit mkdir for create new')
-      assert_match(/cd \"\$dir\"/, stdout, 'should emit cd into created dir')
+      assert_match(/mkdir -p '\S+new-thing'/, stdout, 'should emit mkdir for create new')
+      assert_match(/cd '\S+new-thing'/, stdout, 'should emit cd into created dir')
       assert_match(/\d{4}-\d{2}-\d{2}-new-thing/, stdout, 'should include date-prefixed new directory name')
     end
   end
