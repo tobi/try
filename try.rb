@@ -644,7 +644,18 @@ if __FILE__ == $0
 
         init [--path PATH]  # Initialize shell function for aliasing
         cd [QUERY]          # Interactive selector; prints shell cd commands
+        clone <git-uri> [name]  # Clone git repo into date-prefixed directory
 
+      {h2}Clone Examples:{text}
+
+        try clone https://github.com/tobi/try.git
+        # Creates: 2025-08-27-tobi-try
+
+        try clone https://github.com/tobi/try.git my-fork
+        # Creates: my-fork
+
+        try https://github.com/tobi/try.git
+        # Shorthand for clone (same as first example)
 
       {h2}Defaults:{reset}
         Default path: {dim_text}~/src/tries{reset} (override with --path on commands)
@@ -670,6 +681,48 @@ if __FILE__ == $0
     end
   end
 
+  def parse_git_uri(uri)
+    # Remove .git suffix if present
+    uri = uri.sub(/\.git$/, '')
+    
+    # Handle different git URI formats
+    if uri.match(%r{^https?://github\.com/([^/]+)/([^/]+)})
+      # https://github.com/user/repo
+      user, repo = $1, $2
+      return { user: user, repo: repo, host: 'github.com' }
+    elsif uri.match(%r{^git@github\.com:([^/]+)/([^/]+)})
+      # git@github.com:user/repo
+      user, repo = $1, $2  
+      return { user: user, repo: repo, host: 'github.com' }
+    elsif uri.match(%r{^https?://([^/]+)/([^/]+)/([^/]+)})
+      # https://gitlab.com/user/repo or other git hosts
+      host, user, repo = $1, $2, $3
+      return { user: user, repo: repo, host: host }
+    elsif uri.match(%r{^git@([^:]+):([^/]+)/([^/]+)})
+      # git@host:user/repo
+      host, user, repo = $1, $2, $3
+      return { user: user, repo: repo, host: host }
+    else
+      return nil
+    end
+  end
+
+  def generate_clone_directory_name(git_uri, custom_name = nil)
+    return custom_name if custom_name && !custom_name.empty?
+    
+    parsed = parse_git_uri(git_uri)
+    return nil unless parsed
+    
+    date_prefix = Time.now.strftime("%Y-%m-%d")
+    host_part = parsed[:host].split('.').first  # github.com -> github
+    "#{date_prefix}-#{parsed[:user]}-#{parsed[:repo]}"
+  end
+
+  def is_git_uri?(arg)
+    return false unless arg
+    arg.match?(%r{^(https?://|git@)}) || arg.include?('github.com') || arg.include?('gitlab.com') || arg.include?('.git')
+  end
+
   command = ARGV.shift
 
   tries_path = extract_option_with_value!(ARGV, '--path') || TrySelector::TRY_PATH
@@ -683,6 +736,32 @@ if __FILE__ == $0
   when nil
     print_global_help
     exit 2
+  when 'clone'
+    # Handle try clone <git-uri> [name]
+    git_uri = ARGV.shift
+    custom_name = ARGV.shift
+    
+    unless git_uri
+      warn "Error: git URI required for clone command"
+      warn "Usage: try clone <git-uri> [name]"
+      exit 1
+    end
+
+    dir_name = generate_clone_directory_name(git_uri, custom_name)
+    unless dir_name
+      warn "Error: Unable to parse git URI: #{git_uri}"
+      exit 1
+    end
+
+    full_path = File.join(tries_path, dir_name)
+    
+    parts = []
+    parts << (fish? ? "set -l dir '#{full_path}'" : "dir='#{full_path}'")
+    parts << "mkdir -p \"$dir\""
+    parts << "git clone '#{git_uri}' \"$dir\""
+    parts << "touch \"$dir\""
+    parts << "cd \"$dir\""
+    puts parts.join(" \\\n  && ")
   when 'init'
     script_path = File.expand_path($0)
 
@@ -713,16 +792,37 @@ if __FILE__ == $0
     exit 0
   when 'cd'
     search_term = ARGV.join(' ')
-    selector = TrySelector.new(search_term, base_path: tries_path)
-    result = selector.run
+    
+    # Check if the search term looks like a git URI - if so, treat it as try clone
+    if is_git_uri?(search_term)
+      dir_name = generate_clone_directory_name(search_term)
+      unless dir_name
+        warn "Error: Unable to parse git URI: #{search_term}"
+        exit 1
+      end
 
-    if result
+      full_path = File.join(tries_path, dir_name)
+      
       parts = []
-      parts << (fish? ? "set -l dir '#{result[:path]}'" : "dir='#{result[:path]}'")
-      parts << "mkdir -p \"$dir\"" if result[:type] == :mkdir
+      parts << (fish? ? "set -l dir '#{full_path}'" : "dir='#{full_path}'")
+      parts << "mkdir -p \"$dir\""
+      parts << "git clone '#{search_term}' \"$dir\""
       parts << "touch \"$dir\""
       parts << "cd \"$dir\""
       puts parts.join(" \\\n  && ")
+    else
+      # Regular try cd behavior
+      selector = TrySelector.new(search_term, base_path: tries_path)
+      result = selector.run
+
+      if result
+        parts = []
+        parts << (fish? ? "set -l dir '#{result[:path]}'" : "dir='#{result[:path]}'")
+        parts << "mkdir -p \"$dir\"" if result[:type] == :mkdir
+        parts << "touch \"$dir\""
+        parts << "cd \"$dir\""
+        puts parts.join(" \\\n  && ")
+      end
     end
   else
     warn "Unknown command: #{command}"

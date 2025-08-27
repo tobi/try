@@ -96,11 +96,39 @@ eval "$(~/.local/try.rb init ~/src/tries)"
 ## Usage
 
 ```bash
-try                 # Browse all experiments
-try redis           # Jump to redis experiment or create new
-try new api         # Start with "2025-08-17-new-api"
-try --help          # See all options
+try                                          # Browse all experiments
+try redis                                    # Jump to redis experiment or create new
+try new api                                  # Start with "2025-08-17-new-api"
+try clone https://github.com/user/repo.git  # Clone repo into date-prefixed directory
+try https://github.com/user/repo.git        # Shorthand for clone (same as above)
+try --help                                   # See all options
 ```
+
+### Git Repository Cloning
+
+**try** can automatically clone git repositories into properly named experiment directories:
+
+```bash
+# Clone with auto-generated directory name
+try clone https://github.com/tobi/try.git
+# Creates: 2025-08-27-tobi-try
+
+# Clone with custom name
+try clone https://github.com/tobi/try.git my-fork
+# Creates: my-fork
+
+# Shorthand syntax (no need to type 'clone')
+try https://github.com/tobi/try.git
+# Creates: 2025-08-27-tobi-try
+```
+
+Supported git URI formats:
+- `https://github.com/user/repo.git` (HTTPS GitHub)
+- `git@github.com:user/repo.git` (SSH GitHub)
+- `https://gitlab.com/user/repo.git` (GitLab)
+- `git@host.com:user/repo.git` (SSH other hosts)
+
+The `.git` suffix is automatically removed from URLs when generating directory names.
 
 ### Keyboard Shortcuts
 
