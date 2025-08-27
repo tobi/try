@@ -10,7 +10,7 @@ class TestCloneAndUrlName < Test::Unit::TestCase
 
   def test_clone_generates_script
     Dir.mktmpdir do |dir|
-      stdout, stderr, status = run_cmd('clone', 'https://github.com/tobi/try.git', 'my-fork', '--path', dir)
+      stdout, _stderr, _status = run_cmd('clone', 'https://github.com/tobi/try.git', 'my-fork', '--path', dir)
       assert_match(/mkdir -p \"\$dir\"/, stdout)
       assert_match(/git clone 'https:\/\/github\.com\/tobi\/try\.git' \"\$dir\"/, stdout)
       assert_match(/cd \"\$dir\"/, stdout)
@@ -19,10 +19,9 @@ class TestCloneAndUrlName < Test::Unit::TestCase
 
   def test_cd_url_shorthand_with_name
     Dir.mktmpdir do |dir|
-      stdout, stderr, status = run_cmd('cd', 'https://github.com/tobi/try.git', 'my-fork', '--path', dir)
+      stdout, _stderr, _status = run_cmd('cd', 'https://github.com/tobi/try.git', 'my-fork', '--path', dir)
       assert_match(/git clone 'https:\/\/github\.com\/tobi\/try\.git' \"\$dir\"/, stdout)
       assert_match(/my-fork/, stdout, 'should use the provided custom name in path')
     end
   end
 end
-

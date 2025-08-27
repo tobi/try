@@ -10,7 +10,7 @@ class TestInitEval < Test::Unit::TestCase
 
   def test_init_emits_bash_function_with_path
     Dir.mktmpdir do |dir|
-      stdout, stderr, status = run_cmd({'SHELL' => '/bin/bash'}, 'init', dir)
+      stdout, _stderr, status = run_cmd({'SHELL' => '/bin/bash'}, 'init', dir)
       assert(status.success?, 'init should exit successfully')
       assert_match(/try\(\) \{/, stdout)
       assert_match(/cd --path \"#{Regexp.escape(File.expand_path(dir))}\"/, stdout)
@@ -20,7 +20,7 @@ class TestInitEval < Test::Unit::TestCase
 
   def test_init_emits_fish_function_with_path
     Dir.mktmpdir do |dir|
-      stdout, stderr, status = run_cmd({'SHELL' => '/usr/bin/fish'}, 'init', dir)
+      stdout, _stderr, status = run_cmd({'SHELL' => '/usr/bin/fish'}, 'init', dir)
       assert(status.success?, 'init should exit successfully')
       assert_match(/^function try/m, stdout)
       assert_match(/cd --path \"#{Regexp.escape(File.expand_path(dir))}\"/, stdout)
@@ -28,4 +28,3 @@ class TestInitEval < Test::Unit::TestCase
     end
   end
 end
-

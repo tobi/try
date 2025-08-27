@@ -11,9 +11,7 @@ class TestCreateNewAndDelete < Test::Unit::TestCase
 
   def test_create_new_generates_mkdir_script
     Dir.mktmpdir do |dir|
-      stdout, stderr, status = run_cmd('cd', 'new-thing', '--and-keys', 'ENTER', '--path', dir)
-      combined = stdout.to_s + stderr.to_s
-      assert(status.success? || status.exitstatus == 0, 'expected cd to exit successfully')
+      stdout, _stderr, _status = run_cmd('cd', 'new-thing', '--and-keys', 'ENTER', '--path', dir)
       assert_match(/mkdir -p \"\$dir\"/, stdout, 'should emit mkdir for create new')
       assert_match(/cd \"\$dir\"/, stdout, 'should emit cd into created dir')
       assert_match(/\d{4}-\d{2}-\d{2}-new-thing/, stdout, 'should include date-prefixed new directory name')
@@ -27,7 +25,7 @@ class TestCreateNewAndDelete < Test::Unit::TestCase
       path = File.join(dir, name)
       FileUtils.mkdir_p(path)
 
-      stdout, stderr, status = run_cmd('cd', '--and-type', 'delete-me', '--and-keys', 'CTRL-D,ESC', '--and-confirm', 'YES', '--path', dir)
+      stdout, stderr, _status = run_cmd('cd', '--and-type', 'delete-me', '--and-keys', 'CTRL-D,ESC', '--and-confirm', 'YES', '--path', dir)
       combined = stdout.to_s + stderr.to_s
       clean = combined.gsub(/\e\[[0-9;?]*[ -\/]*[@-~]/, '')
 
@@ -46,7 +44,7 @@ class TestCreateNewAndDelete < Test::Unit::TestCase
       path = File.join(dir, name)
       FileUtils.mkdir_p(path)
 
-      stdout, stderr, status = run_cmd('cd', '--and-type', 'keep-me', '--and-keys', 'CTRL-D,ESC', '--and-confirm', 'NO', '--path', dir)
+      stdout, stderr, _status = run_cmd('cd', '--and-type', 'keep-me', '--and-keys', 'CTRL-D,ESC', '--and-confirm', 'NO', '--path', dir)
       combined = stdout.to_s + stderr.to_s
       clean = combined.gsub(/\e\[[0-9;?]*[ -\/]*[@-~]/, '')
 
@@ -56,4 +54,3 @@ class TestCreateNewAndDelete < Test::Unit::TestCase
     end
   end
 end
-

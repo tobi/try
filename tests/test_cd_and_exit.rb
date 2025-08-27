@@ -15,7 +15,7 @@ class TestCdAndExit < Test::Unit::TestCase
       FileUtils.mkdir_p(File.join(dir, '2025-08-14-redis-connection-pool'))
       FileUtils.mkdir_p(File.join(dir, 'thread-pool'))
 
-      stdout, stderr, status = run_cmd('cd', '--and-type', 'pool', '--and-exit', '--path', dir)
+      stdout, stderr, _status = run_cmd('cd', '--and-type', 'pool', '--and-exit', '--path', dir)
       combined = stdout.to_s + stderr.to_s
       # Strip ANSI escape codes and cursor controls for assertions
       clean = combined.gsub(/\e\[[0-9;?]*[ -\/]*[@-~]/, '')
