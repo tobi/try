@@ -557,10 +557,12 @@ class TrySelector
       # No name typed, prompt for one
       suggested_name = ""
 
-      STDERR.print("\e[2J\e[H\e[?25h")  # Clear, home, show cursor
+      UI.cls  # Clear screen using UI system
       UI.puts "{h2}Enter new try name"
-      UI.print "> {dim_text}#{date_prefix}-{reset}#{suggested_name}"
+      UI.puts
+      UI.puts "> {dim_text}#{date_prefix}-{reset}"
       UI.flush
+      STDERR.print("\e[?25h")
 
       entry = ""
       # Read user input in cooked mode
