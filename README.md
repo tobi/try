@@ -78,20 +78,25 @@ Not just substring matching - it's smart:
 
 ### Shell Integration
 
-Add to your `~/.bashrc` or `~/.zshrc`:
+- Bash/Zsh:
 
+  ```bash
+  # default is ~/src/tries
+  eval "$(~/.local/try.rb init)"
+  # or pick a path
+  eval "$(~/.local/try.rb init ~/src/tries)"
+  ```
 
+- Fish:
 
-```bash
-# default is ~/src/tries
-eval "$(~/.local/try.rb init)"
-```
+  ```fish
+  eval "(~/.local/try.rb init | string collect)"
+  # or pick a path
+  eval "(~/.local/try.rb init ~/src/tries | string collect)"
+  ```
 
-Or if you want to customize the location:
-
-```bash
-eval "$(~/.local/try.rb init ~/src/tries)"
-```
+Notes:
+- The runtime commands printed by `try` are shell-neutral (absolute paths, quoted). Only the small wrapper function differs per shell.
 
 ## Usage
 
@@ -99,10 +104,16 @@ eval "$(~/.local/try.rb init ~/src/tries)"
 try                                          # Browse all experiments
 try redis                                    # Jump to redis experiment or create new
 try new api                                  # Start with "2025-08-17-new-api"
+try .                                         # Create a dated worktree dir for current repo
 try clone https://github.com/user/repo.git  # Clone repo into date-prefixed directory
 try https://github.com/user/repo.git        # Shorthand for clone (same as above)
 try --help                                   # See all options
 ```
+
+Notes on `try .`:
+- Uses the real path's basename for the name, prefixed with today’s date.
+- Inside a Git repo: adds a detached HEAD git worktree to the created directory.
+- Outside a repo: simply creates the directory and changes into it.
 
 ### Git Repository Cloning
 
