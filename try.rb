@@ -66,9 +66,7 @@ module UI
         # Move to line and clear it, then write new content
         io.print("\e[#{i + 1};1H\e[2K")
         if !current_line.empty?
-          processed_line = current_line.gsub(/\{.*?\}/) do |match|
-            TOKEN_MAP.fetch(match) { raise "Unknown token: #{match}" }
-          end
+          processed_line = expand_tokens(current_line)
           io.print(processed_line)
           io.print(reset)
         end
@@ -84,8 +82,8 @@ module UI
   end
 
   def self.cls(io: STDERR)
-    @@buffer.clear
     @@current_line = ""
+    @@buffer.clear
     @@last_buffer.clear
     io.print("\e[2J\e[H")  # Clear screen and go home
   end
@@ -110,6 +108,14 @@ module UI
     w = `tput cols 2>/dev/null`.strip.to_i
     w > 0 ? w : 80
   end
+
+  # Expand tokens in a string to ANSI sequences
+  def self.expand_tokens(str)
+    str.gsub(/\{.*?\}/) do |match|
+      TOKEN_MAP.fetch(match) { raise "Unknown token: #{match}" }
+    end
+  end
+
 end
 
 class TrySelector
@@ -811,62 +817,6 @@ if __FILE__ == $0
   end
   and_keys = parse_test_keys(and_keys_raw)
 
-  def fish?
-    ENV['SHELL']&.include?('fish')
-  end
-
-  # Emit a script from declarative tasks
-  # tasks: [{type: 'target', path: '/abs/dir'}, {type: 'mkdir'}, {type: 'git-clone', uri: '...'}, {type: 'touch'}, {type: 'cd'}]
-  def emit_tasks_script(tasks)
-    target = tasks.find { |t| t[:type] == 'target' }
-    full_path = target && target[:path]
-    raise 'emit_tasks_script requires a target path' unless full_path
-
-    parts = []
-    parts << (fish? ? "set -l dir '#{full_path}'" : "dir='#{full_path}'")
-    tasks.each do |t|
-      case t[:type]
-      when 'mkdir'
-        parts << "mkdir -p \"$dir\""
-      when 'git-clone'
-        parts << "git clone '#{t[:uri]}' \"$dir\""
-      when 'touch'
-        parts << "touch \"$dir\""
-      when 'cd'
-        parts << "cd \"$dir\""
-      end
-    end
-    puts parts.join(" \\\n+  && ")
-  end
-
-  # Keep dispatch tidy with small helpers
-  def emit_script(parts)
-    puts parts.join(" \\\n+  && ")
-  end
-
-  def dir_assign(path)
-    fish? ? "set -l dir '#{path}'" : "dir='#{path}'"
-  end
-
-  def emit_cd_script(full_path, mkdir: false)
-    parts = []
-    parts << dir_assign(full_path)
-    parts << "mkdir -p \"$dir\"" if mkdir
-    parts << "touch \"$dir\""
-    parts << "cd \"$dir\""
-    emit_script(parts)
-  end
-
-  def emit_clone_script(git_uri, full_path)
-    parts = []
-    parts << dir_assign(full_path)
-    parts << "mkdir -p \"$dir\""
-    parts << "git clone '#{git_uri}' \"$dir\""
-    parts << "touch \"$dir\""
-    parts << "cd \"$dir\""
-    emit_script(parts)
-  end
-
   def cmd_clone!(args, tries_path)
     git_uri = args.shift
     custom_name = args.shift
@@ -924,6 +874,25 @@ if __FILE__ == $0
   def cmd_cd!(args, tries_path, and_type, and_exit, and_keys, and_confirm)
     search_term = args.join(' ')
 
+    # Shorthand: try . → derive name from cwd and add git worktree if available
+    if search_term.strip == '.'
+      base = begin
+        File.basename(File.realpath(Dir.pwd))
+      rescue
+        File.basename(Dir.pwd)
+      end
+      date_prefix = Time.now.strftime("%Y-%m-%d")
+      dir_name = "#{date_prefix}-#{base}"
+      full_path = File.join(tries_path, dir_name)
+      return [
+        { type: 'target', path: full_path },
+        { type: 'mkdir' },
+        { type: 'git-worktree' },
+        { type: 'touch' },
+        { type: 'cd' }
+      ]
+    end
+
     # Git URL shorthand → clone workflow
     if is_git_uri?(search_term.split.first)
       git_uri, custom_name = search_term.split(/\s+/, 2)
@@ -959,9 +928,16 @@ if __FILE__ == $0
     result = selector.run
     return nil unless result
     tasks = [{ type: 'target', path: result[:path] }]
-    tasks << { type: 'mkdir' } if result[:type] == :mkdir
+    tasks += [{ type: 'mkdir' }] if result[:type] == :mkdir
     tasks += [{ type: 'touch' }, { type: 'cd' }]
     tasks
+  end
+
+
+
+  # shell detection for init wrapper
+  def fish?
+    ENV['SHELL']&.include?('fish')
   end
 
   case command
@@ -972,31 +948,6 @@ if __FILE__ == $0
     tasks = cmd_clone!(ARGV, tries_path)
     emit_tasks_script(tasks)
     exit 0
-    # Handle try clone <git-uri> [name]
-    git_uri = ARGV.shift
-    custom_name = ARGV.shift
-
-    unless git_uri
-      warn "Error: git URI required for clone command"
-      warn "Usage: try clone <git-uri> [name]"
-      exit 1
-    end
-
-    dir_name = generate_clone_directory_name(git_uri, custom_name)
-    unless dir_name
-      warn "Error: Unable to parse git URI: #{git_uri}"
-      exit 1
-    end
-
-    full_path = File.join(tries_path, dir_name)
-
-    parts = []
-    parts << (fish? ? "set -l dir '#{full_path}'" : "dir='#{full_path}'")
-    parts << "mkdir -p \"$dir\""
-    parts << "git clone '#{git_uri}' \"$dir\""
-    parts << "touch \"$dir\""
-    parts << "cd \"$dir\""
-    puts parts.join(" \\\n  && ")
   when 'init'
     cmd_init!(ARGV, tries_path)
     exit 0
@@ -1004,46 +955,31 @@ if __FILE__ == $0
     tasks = cmd_cd!(ARGV, tries_path, and_type, and_exit, and_keys, and_confirm)
     emit_tasks_script(tasks) if tasks
     exit 0
-
-    # Check if the search term looks like a git URI - if so, treat it as try clone
-    if is_git_uri?(search_term.split.first)
-      git_uri, custom_name = search_term.split(/\s+/, 2)
-      dir_name = generate_clone_directory_name(git_uri, custom_name)
-      unless dir_name
-        warn "Error: Unable to parse git URI: #{git_uri}"
-        exit 1
-      end
-
-      full_path = File.join(tries_path, dir_name)
-
-      parts = []
-      parts << (fish? ? "set -l dir '#{full_path}'" : "dir='#{full_path}'")
-      parts << "mkdir -p \"$dir\""
-      parts << "git clone '#{git_uri}' \"$dir\""
-      parts << "touch \"$dir\""
-      parts << "cd \"$dir\""
-      puts parts.join(" \\\n  && ")
-    else
-      # Regular try cd behavior
-      selector = TrySelector.new(search_term, base_path: tries_path, initial_input: and_type, test_render_once: and_exit, test_no_cls: and_exit)
-      if and_exit
-        selector.run
-        exit 0
-      end
-      result = selector.run
-
-      if result
-        parts = []
-        parts << (fish? ? "set -l dir '#{result[:path]}'" : "dir='#{result[:path]}'")
-        parts << "mkdir -p \"$dir\"" if result[:type] == :mkdir
-        parts << "touch \"$dir\""
-        parts << "cd \"$dir\""
-        puts parts.join(" \\\n  && ")
-      end
-    end
   else
     warn "Unknown command: #{command}"
     print_global_help
     exit 2
   end
+
+
+  full_path = tasks.shift[:path] or raise "emit_tasks_script requires a target path"
+
+  parts = []
+  q = "'" + full_path.gsub("'", %q('"'"'')) + "'" # POSIX-safe single-quote; also works in fish
+  tasks.each do |t|
+    case t[:type]
+    when 'mkdir'
+      parts << "mkdir -p #{q}"
+    when 'git-clone'
+      parts << "git clone '#{t[:uri]}' #{q}"
+    when 'git-worktree'
+      parts << "/usr/bin/env sh -c 'if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then repo=\$(git rev-parse --show-toplevel); git -C \"$repo\" worktree add --detach #{q} >/dev/null 2>&1 || true; fi; exit 0'"
+    when 'touch'
+      parts << "touch #{q}"
+    when 'cd'
+      parts << "cd #{q}"
+    end
+  end
+  puts parts.join(" \\\n+  && ")
+
 end
