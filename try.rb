@@ -836,7 +836,7 @@ if __FILE__ == $0
         parts << "cd \"$dir\""
       end
     end
-    puts parts.join(" \\\n+  && ")
+    puts parts.join(" \\\n  && ")
   end
 
   # Keep dispatch tidy with small helpers
