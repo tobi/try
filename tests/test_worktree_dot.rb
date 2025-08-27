@@ -17,9 +17,12 @@ class TestWorktreeDot < Test::Unit::TestCase
       FileUtils.mkdir_p(File.join(proj, '.git')) # simulate git repo
       tries = Dir.mktmpdir
 
-      stdout, _stderr, _status = run_cmd(proj, 'cd', '.', '--path', tries)
+      # also support path-relative invocation
+      stdout, _stderr, _status = run_cmd(proj, 'cd', './', '--path', tries)
       # Should include a git worktree step (conditional in sh)
       assert_match(/git .* worktree add --detach '\S+'/, stdout)
+      # Should echo intent to use worktree
+      assert_match(/printf %s .*git worktree.*create this trial/i, stdout)
       # Should include date-prefixed cwd name
       base = File.basename(proj)
       assert_match(/\d{4}-\d{2}-\d{2}-#{Regexp.escape(base)}/, stdout)
@@ -35,6 +38,7 @@ class TestWorktreeDot < Test::Unit::TestCase
 
       stdout, _stderr, _status = run_cmd(proj, 'cd', '.', 'custom-name', '--path', tries)
       assert_match(/worktree add --detach '\S+custom-name'/, stdout)
+      assert_match(/printf %s .*git worktree.*create this trial/i, stdout)
       assert_match(/\d{4}-\d{2}-\d{2}-custom-name/, stdout)
     end
   end
@@ -46,6 +50,7 @@ class TestWorktreeDot < Test::Unit::TestCase
       tries = Dir.mktmpdir
       stdout, _stderr, _status = run_cmd(proj, 'cd', '.', '--path', tries)
       refute_match(/worktree add --detach/, stdout)
+      refute_match(/printf %s .*git worktree.*create this trial/i, stdout)
       assert_match(/mkdir -p '\S+\d{4}-\d{2}-\d{2}-plain'/, stdout)
     end
   end

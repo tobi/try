@@ -837,6 +837,7 @@ if __FILE__ == $0
     [
       { type: 'target', path: full_path },
       { type: 'mkdir' },
+      { type: 'echo', msg: "Using {highlight}git clone{reset_fg} to create this trial from #{git_uri}.\n\n" },
       { type: 'git-clone', uri: git_uri },
       { type: 'touch' },
       { type: 'cd' }
@@ -891,6 +892,7 @@ if __FILE__ == $0
       ]
       # Only add worktree when a .git directory exists at that path
       if File.directory?(File.join(repo_dir, '.git'))
+        tasks << { type: 'echo', msg: "Using {highlight}git worktree{reset_fg} to create this trial from #{repo_dir}.\n\n" }
         tasks << { type: 'git-worktree', repo: repo_dir }
       end
       tasks += [
@@ -914,6 +916,7 @@ if __FILE__ == $0
       return [
         { type: 'target', path: full_path },
         { type: 'mkdir' },
+        { type: 'echo', msg: "Using {highlight}git clone{reset_fg} to create this trial from #{git_uri}.\n\n" },
         { type: 'git-clone', uri: git_uri },
         { type: 'touch' },
         { type: 'cd' }
@@ -961,6 +964,11 @@ if __FILE__ == $0
     q = "'" + full_path.gsub("'", %q('"'"'')) + "'"
     tasks.each do |t|
       case t[:type]
+      when 'echo'
+        msg = t[:msg] || ''
+        expanded = UI.expand_tokens(msg)
+        m = "'" + expanded.gsub("'", %q('"'"'')) + "'"
+        parts << "printf %s #{m} 1>&2"
       when 'mkdir'
         parts << "mkdir -p #{q}"
       when 'git-clone'
@@ -1017,11 +1025,13 @@ if __FILE__ == $0
       full_path = File.join(tries_path, dir_name)
       tasks = [
         { type: 'target', path: full_path },
-        { type: 'mkdir' },
-        { type: 'git-worktree' },
-        { type: 'touch' },
-        { type: 'cd' }
+        { type: 'mkdir' }
       ]
+      if File.directory?(File.join(Dir.pwd, '.git'))
+        tasks << { type: 'echo', msg: "Using {highlight}git worktree{reset_fg} to create this trial from #{Dir.pwd}.\n\n" }
+        tasks << { type: 'git-worktree' }
+      end
+      tasks += [ { type: 'touch' }, { type: 'cd' } ]
       emit_tasks_script(tasks)
       exit 0
     else
