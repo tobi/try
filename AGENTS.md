@@ -9,6 +9,8 @@
 ## CLI Interface
 - `try init [PATH]`: Emits a tiny shell wrapper function for your shell. PATH sets the root (absolute path recommended). The function evals the printed, shell-neutral script to `cd` into selections.
 - `try cd [QUERY]`: Launches the interactive selector. If `QUERY` looks like a Git URL, it performs a clone workflow instead. Prints a shell script to stdout; use via the installed function.
+- `try . [name]`: Shorthand to create a date-prefixed directory and, if inside a Git repo, add a detached worktree. Optional `name` overrides the basename.
+- `try worktree dir [name]`: Same as above but explicit CLI, useful without the shell wrapper.
 - `try clone <git-uri> [name]`: Clones into the root. Default name is `YYYY-MM-DD-user-repo` (strips `.git`). Optional `name` overrides.
 - Flags: `--path PATH` (for `cd`/`clone`) overrides the root for that call; `--help` prints global help.
 - Environment: `TRY_PATH` sets the default root when not using `--path`.

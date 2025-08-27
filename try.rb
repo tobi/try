@@ -34,7 +34,7 @@ module UI
   end
 
   def self.flush(io: STDERR)
-    # Always finalize the current line into the buffer
+    # Always fine into the buffer
     unless @@current_line.empty?
       @@buffer << @@current_line
       @@current_line = ""
@@ -872,26 +872,35 @@ if __FILE__ == $0
   end
 
   def cmd_cd!(args, tries_path, and_type, and_exit, and_keys, and_confirm)
-    search_term = args.join(' ')
-
-    # Shorthand: try . → derive name from cwd and add git worktree if available
-    if search_term.strip == '.'
-      base = begin
-        File.basename(File.realpath(Dir.pwd))
-      rescue
-        File.basename(Dir.pwd)
+    # Support: try . [name] and try ./path [name]
+    if args.first && args.first.start_with?('.')
+      path_arg = args.shift
+      custom = args.join(' ')
+      repo_dir = File.expand_path(path_arg)
+      base = if custom && !custom.strip.empty?
+        custom.gsub(/\s+/, '-')
+      else
+        File.basename(repo_dir)
       end
       date_prefix = Time.now.strftime("%Y-%m-%d")
       dir_name = "#{date_prefix}-#{base}"
       full_path = File.join(tries_path, dir_name)
-      return [
+      tasks = [
         { type: 'target', path: full_path },
-        { type: 'mkdir' },
-        { type: 'git-worktree' },
+        { type: 'mkdir' }
+      ]
+      # Only add worktree when a .git directory exists at that path
+      if File.directory?(File.join(repo_dir, '.git'))
+        tasks << { type: 'git-worktree', repo: repo_dir }
+      end
+      tasks += [
         { type: 'touch' },
         { type: 'cd' }
       ]
+      return tasks
     end
+
+    search_term = args.join(' ')
 
     # Git URL shorthand → clone workflow
     if is_git_uri?(search_term.split.first)
@@ -933,7 +942,44 @@ if __FILE__ == $0
     tasks
   end
 
+  # --- Shell emission helpers (moved out of UI) ---
+  def join_commands(parts)
+    parts.join(" \\\n+  && ")
+  end
 
+  def emit_script(parts)
+    puts join_commands(parts)
+  end
+
+  # tasks: [{type: 'target', path: '/abs/dir'}, {type: 'mkdir'|'touch'|'cd'|'git-clone'|'git-worktree', ...}]
+  def emit_tasks_script(tasks)
+    target = tasks.find { |t| t[:type] == 'target' }
+    full_path = target && target[:path]
+    raise 'emit_tasks_script requires a target path' unless full_path
+
+    parts = []
+    q = "'" + full_path.gsub("'", %q('"'"'')) + "'"
+    tasks.each do |t|
+      case t[:type]
+      when 'mkdir'
+        parts << "mkdir -p #{q}"
+      when 'git-clone'
+        parts << "git clone '#{t[:uri]}' #{q}"
+      when 'git-worktree'
+        if t[:repo]
+          r = "'" + t[:repo].gsub("'", %q('"'"'')) + "'"
+          parts << "/usr/bin/env sh -c 'if git -C " + r + " rev-parse --is-inside-work-tree >/dev/null 2>&1; then repo=\$(git -C " + r + " rev-parse --show-toplevel); git -C \"$repo\" worktree add --detach #{q} >/dev/null 2>&1 || true; fi; exit 0'"
+        else
+          parts << "/usr/bin/env sh -c 'if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then repo=\$(git rev-parse --show-toplevel); git -C \"$repo\" worktree add --detach #{q} >/dev/null 2>&1 || true; fi; exit 0'"
+        end
+      when 'touch'
+        parts << "touch #{q}"
+      when 'cd'
+        parts << "cd #{q}"
+      end
+    end
+    emit_script(parts)
+  end
 
   # shell detection for init wrapper
   def fish?
@@ -951,6 +997,37 @@ if __FILE__ == $0
   when 'init'
     cmd_init!(ARGV, tries_path)
     exit 0
+  when 'worktree'
+    sub = ARGV.shift
+    case sub
+    when 'dir'
+      # try worktree dir [name]
+      custom = ARGV.join(' ')
+      base = if custom && !custom.strip.empty?
+        custom.gsub(/\s+/, '-')
+      else
+        begin
+          File.basename(File.realpath(Dir.pwd))
+        rescue
+          File.basename(Dir.pwd)
+        end
+      end
+      date_prefix = Time.now.strftime("%Y-%m-%d")
+      dir_name = "#{date_prefix}-#{base}"
+      full_path = File.join(tries_path, dir_name)
+      tasks = [
+        { type: 'target', path: full_path },
+        { type: 'mkdir' },
+        { type: 'git-worktree' },
+        { type: 'touch' },
+        { type: 'cd' }
+      ]
+      emit_tasks_script(tasks)
+      exit 0
+    else
+      warn "Unknown worktree subcommand: #{sub.inspect}"
+      exit 2
+    end
   when 'cd'
     tasks = cmd_cd!(ARGV, tries_path, and_type, and_exit, and_keys, and_confirm)
     emit_tasks_script(tasks) if tasks
@@ -960,26 +1037,5 @@ if __FILE__ == $0
     print_global_help
     exit 2
   end
-
-
-  full_path = tasks.shift[:path] or raise "emit_tasks_script requires a target path"
-
-  parts = []
-  q = "'" + full_path.gsub("'", %q('"'"'')) + "'" # POSIX-safe single-quote; also works in fish
-  tasks.each do |t|
-    case t[:type]
-    when 'mkdir'
-      parts << "mkdir -p #{q}"
-    when 'git-clone'
-      parts << "git clone '#{t[:uri]}' #{q}"
-    when 'git-worktree'
-      parts << "/usr/bin/env sh -c 'if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then repo=\$(git rev-parse --show-toplevel); git -C \"$repo\" worktree add --detach #{q} >/dev/null 2>&1 || true; fi; exit 0'"
-    when 'touch'
-      parts << "touch #{q}"
-    when 'cd'
-      parts << "cd #{q}"
-    end
-  end
-  puts parts.join(" \\\n+  && ")
 
 end

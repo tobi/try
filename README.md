@@ -104,14 +104,16 @@ Notes:
 try                                          # Browse all experiments
 try redis                                    # Jump to redis experiment or create new
 try new api                                  # Start with "2025-08-17-new-api"
-try .                                         # Create a dated worktree dir for current repo
+try . [name]                                   # Create a dated worktree dir for current repo
+try ./path/to/repo [name]                      # Use another repo as the worktree source
+try worktree dir [name]                        # Same as above, explicit CLI form
 try clone https://github.com/user/repo.git  # Clone repo into date-prefixed directory
 try https://github.com/user/repo.git        # Shorthand for clone (same as above)
 try --help                                   # See all options
 ```
 
-Notes on `try .`:
-- Uses the real path's basename for the name, prefixed with today’s date.
+Notes on worktrees (`try .` / `try worktree dir`):
+- With a custom [name], uses that; otherwise uses cwd’s basename. Both are prefixed with today’s date.
 - Inside a Git repo: adds a detached HEAD git worktree to the created directory.
 - Outside a repo: simply creates the directory and changes into it.
 
