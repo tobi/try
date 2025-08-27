@@ -1,0 +1,31 @@
+require 'test/unit'
+require 'open3'
+require 'tmpdir'
+
+class TestInitEval < Test::Unit::TestCase
+  def run_cmd(env = {}, *args)
+    cmd = [RbConfig.ruby, File.expand_path('../try.rb', __dir__), *args]
+    Open3.capture3(env, *cmd)
+  end
+
+  def test_init_emits_bash_function_with_path
+    Dir.mktmpdir do |dir|
+      stdout, stderr, status = run_cmd({'SHELL' => '/bin/bash'}, 'init', dir)
+      assert(status.success?, 'init should exit successfully')
+      assert_match(/try\(\) \{/, stdout)
+      assert_match(/cd --path \"#{Regexp.escape(File.expand_path(dir))}\"/, stdout)
+      assert_match(/eval \"\$cmd\" \|\| echo \"\$cmd\";/, stdout)
+    end
+  end
+
+  def test_init_emits_fish_function_with_path
+    Dir.mktmpdir do |dir|
+      stdout, stderr, status = run_cmd({'SHELL' => '/usr/bin/fish'}, 'init', dir)
+      assert(status.success?, 'init should exit successfully')
+      assert_match(/^function try/m, stdout)
+      assert_match(/cd --path \"#{Regexp.escape(File.expand_path(dir))}\"/, stdout)
+      assert_match(/string collect\)$/, stdout)
+    end
+  end
+end
+
