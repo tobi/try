@@ -34,7 +34,25 @@ module UI
   end
 
   def self.flush(io: STDERR)
-    # Position cursor at home
+    # Always finalize the current line into the buffer
+    unless @@current_line.empty?
+      @@buffer << @@current_line
+      @@current_line = ""
+    end
+
+    # In non-TTY contexts, print plain text without control codes or tokens
+    unless io.tty?
+      plain = @@buffer.join("\n").gsub(/\{.*?\}/, '')
+      io.print(plain)
+      io.print("\n") unless plain.end_with?("\n")
+      @@last_buffer = []
+      @@buffer.clear
+      @@current_line = ""
+      io.flush
+      return
+    end
+
+    # Position cursor at home for TTY
     io.print("\e[H")
 
     max_lines = [@@buffer.length, @@last_buffer.length].max
@@ -97,15 +115,19 @@ end
 class TrySelector
   TRY_PATH = ENV['TRY_PATH'] || File.expand_path("~/src/tries")
 
-  def initialize(search_term = "", base_path: TRY_PATH)
+  def initialize(search_term = "", base_path: TRY_PATH, initial_input: nil, test_render_once: false, test_no_cls: false, test_keys: nil, test_confirm: nil)
     @search_term = search_term.gsub(/\s+/, '-')
     @cursor_pos = 0
     @scroll_offset = 0
-    @input_buffer = @search_term
+    @input_buffer = initial_input ? initial_input.gsub(/\s+/, '-') : @search_term
     @selected = nil
     @all_trials = nil  # Memoized trials
     @base_path = base_path
     @delete_status = nil  # Status message for deletions
+    @test_render_once = test_render_once
+    @test_no_cls = test_no_cls
+    @test_keys = test_keys
+    @test_confirm = test_confirm
 
     FileUtils.mkdir_p(@base_path) unless Dir.exist?(@base_path)
   end
@@ -115,14 +137,24 @@ class TrySelector
     # This allows stdout to be captured for the shell commands
     setup_terminal
 
-    # Check if we have a TTY
-    if !STDIN.tty? || !STDERR.tty?
-      UI.puts "Error: try requires an interactive terminal"
+    # In test mode, render once and exit without TTY requirements
+    if @test_render_once
+      tries = get_tries
+      render(tries)
       return nil
     end
 
-    STDERR.raw do
+    # Check if we have a TTY; allow tests with injected keys
+    if !STDIN.tty? || !STDERR.tty?
+      if @test_keys.nil? || @test_keys.empty?
+        UI.puts "Error: try requires an interactive terminal"
+        return nil
+      end
       main_loop
+    else
+      STDERR.raw do
+        main_loop
+      end
     end
   ensure
     restore_terminal
@@ -131,13 +163,17 @@ class TrySelector
   private
 
   def setup_terminal
-    UI.cls
-    STDERR.print("\e[2J\e[H\e[?25l")  # Direct clear screen, home, hide cursor
+    unless @test_no_cls
+      UI.cls
+      STDERR.print("\e[2J\e[H\e[?25l")  # Direct clear screen, home, hide cursor
+    end
   end
 
   def restore_terminal
-    # Clear screen completely before restoring
-    STDERR.print("\e[2J\e[H\e[?25h")  # Direct clear, home, show cursor
+    # Clear screen completely before restoring (skip in test mode)
+    unless @test_no_cls
+      STDERR.print("\e[2J\e[H\e[?25h")  # Direct clear, home, show cursor
+    end
   end
 
   def load_all_tries
@@ -259,7 +295,7 @@ class TrySelector
 
       render(tries)
 
-      key = UI.read_key
+      key = read_key
 
       case key
       when "\e[A", "\x10"  # Up arrow or Ctrl-P
@@ -298,6 +334,13 @@ class TrySelector
     end
 
     @selected
+  end
+
+  def read_key
+    if @test_keys && !@test_keys.empty?
+      return @test_keys.shift
+    end
+    UI.read_key
   end
 
   def render(tries)
@@ -600,11 +643,15 @@ class TrySelector
     UI.flush
     STDERR.print("\e[?25h")  # Show cursor after flushing
 
+    # Confirmation input: in tests, use injected value; otherwise read from TTY
     confirmation = ""
-    # Read user input in cooked mode
-    STDERR.cooked do
-      STDIN.iflush
-      confirmation = gets.chomp
+    if @test_confirm || !STDERR.tty?
+      confirmation = (@test_confirm || STDIN.gets)&.chomp.to_s
+    else
+      STDERR.cooked do
+        STDIN.iflush
+        confirmation = gets.chomp
+      end
     end
 
     if confirmation == "YES"
@@ -645,7 +692,7 @@ if __FILE__ == $0
       {h2}Usage:{text}
 
         init [--path PATH]  # Initialize shell function for aliasing
-        cd [QUERY]          # Interactive selector; prints shell cd commands
+        cd [QUERY] [name?]  # Interactive selector; Git URL shorthand supported
         clone <git-uri> [name]  # Clone git repo into date-prefixed directory
 
       {h2}Clone Examples:{text}
@@ -663,6 +710,7 @@ if __FILE__ == $0
         Default path: {dim_text}~/src/tries{reset} (override with --path on commands)
         Current default: {dim_text}#{TrySelector::TRY_PATH}{reset}
     HELP
+    UI.flush(io: STDOUT)
   end
 
   # Global help: show for --help/-h anywhere
@@ -686,7 +734,7 @@ if __FILE__ == $0
   def parse_git_uri(uri)
     # Remove .git suffix if present
     uri = uri.sub(/\.git$/, '')
-    
+
     # Handle different git URI formats
     if uri.match(%r{^https?://github\.com/([^/]+)/([^/]+)})
       # https://github.com/user/repo
@@ -694,7 +742,7 @@ if __FILE__ == $0
       return { user: user, repo: repo, host: 'github.com' }
     elsif uri.match(%r{^git@github\.com:([^/]+)/([^/]+)})
       # git@github.com:user/repo
-      user, repo = $1, $2  
+      user, repo = $1, $2
       return { user: user, repo: repo, host: 'github.com' }
     elsif uri.match(%r{^https?://([^/]+)/([^/]+)/([^/]+)})
       # https://gitlab.com/user/repo or other git hosts
@@ -711,10 +759,10 @@ if __FILE__ == $0
 
   def generate_clone_directory_name(git_uri, custom_name = nil)
     return custom_name if custom_name && !custom_name.empty?
-    
+
     parsed = parse_git_uri(git_uri)
     return nil unless parsed
-    
+
     date_prefix = Time.now.strftime("%Y-%m-%d")
     host_part = parsed[:host].split('.').first  # github.com -> github
     "#{date_prefix}-#{parsed[:user]}-#{parsed[:repo]}"
@@ -722,7 +770,7 @@ if __FILE__ == $0
 
   def is_git_uri?(arg)
     return false unless arg
-    arg.match?(%r{^(https?://|git@)}) || arg.include?('github.com') || arg.include?('gitlab.com') || arg.include?('.git')
+    arg.match?(%r{^(https?://|git@)}) || arg.include?('github.com') || arg.include?('gitlab.com') || arg.end_with?('.git')
   end
 
   command = ARGV.shift
@@ -730,19 +778,99 @@ if __FILE__ == $0
   tries_path = extract_option_with_value!(ARGV, '--path') || TrySelector::TRY_PATH
   tries_path = File.expand_path(tries_path)
 
+  # Test-only flags (undocumented; aid acceptance tests)
+  and_type = extract_option_with_value!(ARGV, '--and-type')
+  and_exit = !!ARGV.delete('--and-exit')
+  and_keys_raw = extract_option_with_value!(ARGV, '--and-keys')
+  and_confirm = extract_option_with_value!(ARGV, '--and-confirm')
+
+  def parse_test_keys(spec)
+    return nil unless spec && !spec.empty?
+    tokens = spec.split(/,\s*/)
+    keys = []
+    tokens.each do |tok|
+      up = tok.upcase
+      case up
+      when 'UP' then keys << "\e[A"
+      when 'DOWN' then keys << "\e[B"
+      when 'LEFT' then keys << "\e[D"
+      when 'RIGHT' then keys << "\e[C"
+      when 'ENTER' then keys << "\r"
+      when 'ESC' then keys << "\e"
+      when 'BACKSPACE' then keys << "\x7F"
+      when 'CTRL-D', 'CTRLD' then keys << "\x04"
+      when 'CTRL-P', 'CTRLP' then keys << "\x10"
+      when 'CTRL-N', 'CTRLN' then keys << "\x0E"
+      when /^TYPE=(.*)$/
+        $1.each_char { |ch| keys << ch }
+      else
+        keys << tok if tok.length == 1
+      end
+    end
+    keys
+  end
+  and_keys = parse_test_keys(and_keys_raw)
+
   def fish?
     ENV['SHELL']&.include?('fish')
   end
 
-  case command
-  when nil
-    print_global_help
-    exit 2
-  when 'clone'
-    # Handle try clone <git-uri> [name]
-    git_uri = ARGV.shift
-    custom_name = ARGV.shift
-    
+  # Emit a script from declarative tasks
+  # tasks: [{type: 'target', path: '/abs/dir'}, {type: 'mkdir'}, {type: 'git-clone', uri: '...'}, {type: 'touch'}, {type: 'cd'}]
+  def emit_tasks_script(tasks)
+    target = tasks.find { |t| t[:type] == 'target' }
+    full_path = target && target[:path]
+    raise 'emit_tasks_script requires a target path' unless full_path
+
+    parts = []
+    parts << (fish? ? "set -l dir '#{full_path}'" : "dir='#{full_path}'")
+    tasks.each do |t|
+      case t[:type]
+      when 'mkdir'
+        parts << "mkdir -p \"$dir\""
+      when 'git-clone'
+        parts << "git clone '#{t[:uri]}' \"$dir\""
+      when 'touch'
+        parts << "touch \"$dir\""
+      when 'cd'
+        parts << "cd \"$dir\""
+      end
+    end
+    puts parts.join(" \\\n+  && ")
+  end
+
+  # Keep dispatch tidy with small helpers
+  def emit_script(parts)
+    puts parts.join(" \\\n+  && ")
+  end
+
+  def dir_assign(path)
+    fish? ? "set -l dir '#{path}'" : "dir='#{path}'"
+  end
+
+  def emit_cd_script(full_path, mkdir: false)
+    parts = []
+    parts << dir_assign(full_path)
+    parts << "mkdir -p \"$dir\"" if mkdir
+    parts << "touch \"$dir\""
+    parts << "cd \"$dir\""
+    emit_script(parts)
+  end
+
+  def emit_clone_script(git_uri, full_path)
+    parts = []
+    parts << dir_assign(full_path)
+    parts << "mkdir -p \"$dir\""
+    parts << "git clone '#{git_uri}' \"$dir\""
+    parts << "touch \"$dir\""
+    parts << "cd \"$dir\""
+    emit_script(parts)
+  end
+
+  def cmd_clone!(args, tries_path)
+    git_uri = args.shift
+    custom_name = args.shift
+
     unless git_uri
       warn "Error: git URI required for clone command"
       warn "Usage: try clone <git-uri> [name]"
@@ -756,20 +884,20 @@ if __FILE__ == $0
     end
 
     full_path = File.join(tries_path, dir_name)
-    
-    parts = []
-    parts << (fish? ? "set -l dir '#{full_path}'" : "dir='#{full_path}'")
-    parts << "mkdir -p \"$dir\""
-    parts << "git clone '#{git_uri}' \"$dir\""
-    parts << "touch \"$dir\""
-    parts << "cd \"$dir\""
-    puts parts.join(" \\\n  && ")
-  when 'init'
+    [
+      { type: 'target', path: full_path },
+      { type: 'mkdir' },
+      { type: 'git-clone', uri: git_uri },
+      { type: 'touch' },
+      { type: 'cd' }
+    ]
+  end
+
+  def cmd_init!(args, tries_path)
     script_path = File.expand_path($0)
 
-    if ARGV[0] && ARGV[0].start_with?('/')
-      tries_path = File.expand_path(ARGV[0])
-      ARGV.shift
+    if args[0] && args[0].start_with?('/')
+      tries_path = File.expand_path(args.shift)
     end
 
     path_arg = tries_path ? " --path \"#{tries_path}\"" : ""
@@ -790,31 +918,118 @@ if __FILE__ == $0
     SHELL
 
     puts fish? ? fish_script : bash_or_zsh_script
+    exit 0
+  end
 
+  def cmd_cd!(args, tries_path, and_type, and_exit, and_keys, and_confirm)
+    search_term = args.join(' ')
+
+    # Git URL shorthand → clone workflow
+    if is_git_uri?(search_term.split.first)
+      git_uri, custom_name = search_term.split(/\s+/, 2)
+      dir_name = generate_clone_directory_name(git_uri, custom_name)
+      unless dir_name
+        warn "Error: Unable to parse git URI: #{git_uri}"
+        exit 1
+      end
+      full_path = File.join(tries_path, dir_name)
+      return [
+        { type: 'target', path: full_path },
+        { type: 'mkdir' },
+        { type: 'git-clone', uri: git_uri },
+        { type: 'touch' },
+        { type: 'cd' }
+      ]
+    end
+
+    # Regular interactive selector
+    selector = TrySelector.new(
+      search_term,
+      base_path: tries_path,
+      initial_input: and_type,
+      test_render_once: and_exit,
+      test_no_cls: (and_exit || (and_keys && !and_keys.empty?)),
+      test_keys: and_keys,
+      test_confirm: and_confirm
+    )
+    if and_exit
+      selector.run
+      exit 0
+    end
+    result = selector.run
+    return nil unless result
+    tasks = [{ type: 'target', path: result[:path] }]
+    tasks << { type: 'mkdir' } if result[:type] == :mkdir
+    tasks += [{ type: 'touch' }, { type: 'cd' }]
+    tasks
+  end
+
+  case command
+  when nil
+    print_global_help
+    exit 2
+  when 'clone'
+    tasks = cmd_clone!(ARGV, tries_path)
+    emit_tasks_script(tasks)
+    exit 0
+    # Handle try clone <git-uri> [name]
+    git_uri = ARGV.shift
+    custom_name = ARGV.shift
+
+    unless git_uri
+      warn "Error: git URI required for clone command"
+      warn "Usage: try clone <git-uri> [name]"
+      exit 1
+    end
+
+    dir_name = generate_clone_directory_name(git_uri, custom_name)
+    unless dir_name
+      warn "Error: Unable to parse git URI: #{git_uri}"
+      exit 1
+    end
+
+    full_path = File.join(tries_path, dir_name)
+
+    parts = []
+    parts << (fish? ? "set -l dir '#{full_path}'" : "dir='#{full_path}'")
+    parts << "mkdir -p \"$dir\""
+    parts << "git clone '#{git_uri}' \"$dir\""
+    parts << "touch \"$dir\""
+    parts << "cd \"$dir\""
+    puts parts.join(" \\\n  && ")
+  when 'init'
+    cmd_init!(ARGV, tries_path)
     exit 0
   when 'cd'
-    search_term = ARGV.join(' ')
-    
+    tasks = cmd_cd!(ARGV, tries_path, and_type, and_exit, and_keys, and_confirm)
+    emit_tasks_script(tasks) if tasks
+    exit 0
+
     # Check if the search term looks like a git URI - if so, treat it as try clone
-    if is_git_uri?(search_term)
-      dir_name = generate_clone_directory_name(search_term)
+    if is_git_uri?(search_term.split.first)
+      git_uri, custom_name = search_term.split(/\s+/, 2)
+      dir_name = generate_clone_directory_name(git_uri, custom_name)
       unless dir_name
-        warn "Error: Unable to parse git URI: #{search_term}"
+        warn "Error: Unable to parse git URI: #{git_uri}"
         exit 1
       end
 
       full_path = File.join(tries_path, dir_name)
-      
+
       parts = []
       parts << (fish? ? "set -l dir '#{full_path}'" : "dir='#{full_path}'")
       parts << "mkdir -p \"$dir\""
-      parts << "git clone '#{search_term}' \"$dir\""
+      parts << "git clone '#{git_uri}' \"$dir\""
       parts << "touch \"$dir\""
       parts << "cd \"$dir\""
       puts parts.join(" \\\n  && ")
     else
       # Regular try cd behavior
-      selector = TrySelector.new(search_term, base_path: tries_path)
+      selector = TrySelector.new(search_term, base_path: tries_path, initial_input: and_type, test_render_once: and_exit, test_no_cls: and_exit)
+      if and_exit
+        selector.run
+        exit 0
+      end
       result = selector.run
 
       if result
