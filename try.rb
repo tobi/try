@@ -700,6 +700,8 @@ if __FILE__ == $0
         init [--path PATH]  # Initialize shell function for aliasing
         cd [QUERY] [name?]  # Interactive selector; Git URL shorthand supported
         clone <git-uri> [name]  # Clone git repo into date-prefixed directory
+        worktree dir [name]  # Create date-prefixed dir; add worktree from CWD if git repo
+        worktree <repo-path> [name]  # Same as above, but source repo is <repo-path>
 
       {h2}Clone Examples:{text}
 
@@ -711,6 +713,14 @@ if __FILE__ == $0
 
         try https://github.com/tobi/try.git
         # Shorthand for clone (same as first example)
+
+      {h2}Worktree Examples:{text}
+
+        try worktree dir
+        # From current git repo, creates: 2025-08-27-repo-name and adds detached worktree
+
+        try worktree ~/src/github.com/tobi/try my-branch
+        # From given repo path, creates: 2025-08-27-my-branch and adds detached worktree
 
       {h2}Defaults:{reset}
         Default path: {dim_text}~/src/tries{reset} (override with --path on commands)
@@ -907,6 +917,8 @@ if __FILE__ == $0
         File.basename(repo_dir)
       end
       date_prefix = Time.now.strftime("%Y-%m-%d")
+      # Prefer bumping numeric suffix if base ends with digits and today's name exists
+      base = resolve_unique_name_with_versioning(tries_path, date_prefix, base)
       dir_name = "#{date_prefix}-#{base}"
       full_path = File.join(tries_path, dir_name)
       tasks = [
@@ -939,7 +951,7 @@ if __FILE__ == $0
       return [
         { type: 'target', path: full_path },
         { type: 'mkdir' },
-        { type: 'echo', msg: "Using {highlight}git clone{reset_fg} to create this trial from #{git_uri}.\n\n" },
+        { type: 'echo', msg: "Using {highlight}git clone{reset_fg} to create this trial from #{git_uri}." },
         { type: 'git-clone', uri: git_uri },
         { type: 'touch' },
         { type: 'cd' }
@@ -970,7 +982,7 @@ if __FILE__ == $0
 
   # --- Shell emission helpers (moved out of UI) ---
   def join_commands(parts)
-    parts.join(" \\\n+  && ")
+    parts.join(" \\\n  && ")
   end
 
   def emit_script(parts)
@@ -991,7 +1003,7 @@ if __FILE__ == $0
         msg = t[:msg] || ''
         expanded = UI.expand_tokens(msg)
         m = "'" + expanded.gsub("'", %q('"'"'')) + "'"
-        parts << "printf %s #{m} 1>&2"
+        parts << "echo #{m}"
       when 'mkdir'
         parts << "mkdir -p #{q}"
       when 'git-clone'
@@ -1012,10 +1024,45 @@ if __FILE__ == $0
     emit_script(parts)
   end
 
+  # Return a unique directory name under tries_path by appending -2, -3, ... if needed
+  def unique_dir_name(tries_path, dir_name)
+    candidate = dir_name
+    i = 2
+    while Dir.exist?(File.join(tries_path, candidate))
+      candidate = "#{dir_name}-#{i}"
+      i += 1
+    end
+    candidate
+  end
+
+  # If the given base ends with digits and today's dir already exists,
+  # bump the trailing number to the next available one for today.
+  # Otherwise, fall back to unique_dir_name with -2, -3 suffixes.
+  def resolve_unique_name_with_versioning(tries_path, date_prefix, base)
+    initial = "#{date_prefix}-#{base}"
+    return base unless Dir.exist?(File.join(tries_path, initial))
+
+    m = base.match(/^(.*?)(\d+)$/)
+    if m
+      stem, n = m[1], m[2].to_i
+      candidate_num = n + 1
+      loop do
+        candidate_base = "#{stem}#{candidate_num}"
+        candidate_full = File.join(tries_path, "#{date_prefix}-#{candidate_base}")
+        return candidate_base unless Dir.exist?(candidate_full)
+        candidate_num += 1
+      end
+    else
+      # No numeric suffix; use -2 style uniqueness on full name
+      return unique_dir_name(tries_path, "#{date_prefix}-#{base}").sub(/^#{Regexp.escape(date_prefix)}-/, '')
+    end
+  end
+
   # shell detection for init wrapper
   def fish?
     ENV['SHELL']&.include?('fish')
   end
+
 
   case command
   when nil
@@ -1031,8 +1078,8 @@ if __FILE__ == $0
   when 'worktree'
     sub = ARGV.shift
     case sub
-    when 'dir'
-      # try worktree dir [name]
+    when nil, 'dir'
+      # try worktree dir [name]  (or no subcommand -> current directory)
       custom = ARGV.join(' ')
       base = if custom && !custom.strip.empty?
         custom.gsub(/\s+/, '-')
@@ -1044,6 +1091,7 @@ if __FILE__ == $0
         end
       end
       date_prefix = Time.now.strftime("%Y-%m-%d")
+      base = resolve_unique_name_with_versioning(tries_path, date_prefix, base)
       dir_name = "#{date_prefix}-#{base}"
       full_path = File.join(tries_path, dir_name)
       tasks = [
@@ -1051,15 +1099,39 @@ if __FILE__ == $0
         { type: 'mkdir' }
       ]
       if File.directory?(File.join(Dir.pwd, '.git'))
-        tasks << { type: 'echo', msg: "Using {highlight}git worktree{reset_fg} to create this trial from #{Dir.pwd}.\n\n" }
+        tasks << { type: 'echo', msg: "Using {highlight}git worktree{reset_fg} to create this trial from #{Dir.pwd}." }
         tasks << { type: 'git-worktree' }
       end
       tasks += [ { type: 'touch' }, { type: 'cd' } ]
       emit_tasks_script(tasks)
       exit 0
     else
-      warn "Unknown worktree subcommand: #{sub.inspect}"
-      exit 2
+      # try worktree <repo-path> [name]
+      repo_dir = File.expand_path(sub)
+      custom = ARGV.join(' ')
+      base = if custom && !custom.strip.empty?
+        custom.gsub(/\s+/, '-')
+      else
+        begin
+          File.basename(File.realpath(repo_dir))
+        rescue
+          File.basename(repo_dir)
+        end
+      end
+      date_prefix = Time.now.strftime("%Y-%m-%d")
+      base = resolve_unique_name_with_versioning(tries_path, date_prefix, base)
+      dir_name = "#{date_prefix}-#{base}"
+      full_path = File.join(tries_path, dir_name)
+      tasks = [
+        { type: 'target', path: full_path },
+        { type: 'mkdir' }
+      ]
+      # We’ll ask emit_tasks_script to add a worktree from the given repo path
+      tasks << { type: 'echo', msg: "Using {highlight}git worktree{reset_fg} to create this trial from #{repo_dir}." }
+      tasks << { type: 'git-worktree', repo: repo_dir }
+      tasks += [ { type: 'touch' }, { type: 'cd' } ]
+      emit_tasks_script(tasks)
+      exit 0
     end
   when 'cd'
     tasks = cmd_cd!(ARGV, tries_path, and_type, and_exit, and_keys, and_confirm)

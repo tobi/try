@@ -11,15 +11,14 @@ class TestCloneEcho < Test::Unit::TestCase
   def test_clone_echo_message_present
     Dir.mktmpdir do |dir|
       stdout, _stderr, _status = run_cmd('clone', 'https://github.com/tobi/try.git', 'my-fork', '--path', dir)
-      assert_match(/printf %s .*git clone.*create this trial/i, stdout)
+      assert_match(/(?:printf %s|echo) .*git clone.*create this trial/i, stdout)
     end
   end
 
   def test_cd_url_echo_message_present
     Dir.mktmpdir do |dir|
       stdout, _stderr, _status = run_cmd('cd', 'https://github.com/tobi/try.git', 'my-fork', '--path', dir)
-      assert_match(/printf %s .*git clone.*create this trial/i, stdout)
+      assert_match(/(?:printf %s|echo) .*git clone.*create this trial/i, stdout)
     end
   end
 end
-

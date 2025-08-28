@@ -16,7 +16,9 @@ class TestInitEval < Test::Unit::TestCase
       assert_match(/cd --path \"#{Regexp.escape(File.expand_path(dir))}\"/, stdout)
       assert_match(/case \"\$cmd\" in/m, stdout)
       assert_match(/\*" \&\& "\*\) eval \"\$cmd\" ;;/, stdout)
-      assert_match(/printf %s \"\$cmd\"/, stdout)
+      # After the case, wrapper prints the command for shell-neutral usage.
+      # Accept either printf or echo implementations.
+      assert_match(/(printf %s \"\$cmd\"|echo \"\$cmd\")/, stdout)
     end
   end
 
