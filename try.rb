@@ -681,7 +681,7 @@ end
 if __FILE__ == $0
 
   def print_global_help
-    UI.print <<~HELP
+    text = <<~HELP
       {h1}try something!{reset}
 
       Lightweight experiments for people with ADHD
@@ -716,7 +716,14 @@ if __FILE__ == $0
         Default path: {dim_text}~/src/tries{reset} (override with --path on commands)
         Current default: {dim_text}#{TrySelector::TRY_PATH}{reset}
     HELP
-    UI.flush(io: STDOUT)
+    # Help should not manipulate the screen; print plainly to STDOUT.
+    # Expand tokens to ANSI only when STDOUT is a TTY; otherwise strip tokens.
+    out = if STDOUT.tty?
+      UI.expand_tokens(text)
+    else
+      text.gsub(/\{.*?\}/, '')
+    end
+    STDOUT.print(out)
   end
 
   # Global help: show for --help/-h anywhere
@@ -837,9 +844,8 @@ if __FILE__ == $0
     [
       { type: 'target', path: full_path },
       { type: 'mkdir' },
-      { type: 'echo', msg: "Using {highlight}git clone{reset_fg} to create this trial from #{git_uri}.\n\n" },
+      { type: 'echo', msg: "Using {highlight}git clone{reset_fg} to create this trial from #{git_uri}." },
       { type: 'git-clone', uri: git_uri },
-      { type: 'touch' },
       { type: 'cd' }
     ]
   end
@@ -854,9 +860,17 @@ if __FILE__ == $0
     path_arg = tries_path ? " --path \"#{tries_path}\"" : ""
     bash_or_zsh_script = <<~SHELL
       try() {
-        script_path='#{script_path}';
-        cmd=$(/usr/bin/env ruby "$script_path" cd#{path_arg} "$@" 2>/dev/tty);
-        [ $? -eq 0 ] && eval "$cmd" || echo "$cmd";
+        script_path='#{script_path}'
+        cmd=$(/usr/bin/env ruby "$script_path" cd#{path_arg} "$@" 2>/dev/tty)
+        status=$?
+        if [ $status -eq 0 ]; then
+          case "$cmd" in
+            *" && "*) eval "$cmd" ;;
+            *) printf %s "$cmd" ;;
+          esac
+        else
+          printf %s "$cmd"
+        fi
       }
     SHELL
 
@@ -864,7 +878,16 @@ if __FILE__ == $0
       function try
         set -l script_path "#{script_path}"
         set -l cmd (/usr/bin/env ruby "$script_path" cd#{path_arg} $argv 2>/dev/tty | string collect)
-        test $status -eq 0 && eval $cmd || echo $cmd
+        set -l status $status
+        if test $status -eq 0
+          if string match -r ' && ' -- $cmd
+            eval $cmd
+          else
+            printf %s $cmd
+          end
+        else
+          printf %s $cmd
+        end
       end
     SHELL
 
@@ -892,7 +915,7 @@ if __FILE__ == $0
       ]
       # Only add worktree when a .git directory exists at that path
       if File.directory?(File.join(repo_dir, '.git'))
-        tasks << { type: 'echo', msg: "Using {highlight}git worktree{reset_fg} to create this trial from #{repo_dir}.\n\n" }
+        tasks << { type: 'echo', msg: "Using {highlight}git worktree{reset_fg} to create this trial from #{repo_dir}." }
         tasks << { type: 'git-worktree', repo: repo_dir }
       end
       tasks += [

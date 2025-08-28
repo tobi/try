@@ -14,7 +14,9 @@ class TestInitEval < Test::Unit::TestCase
       assert(status.success?, 'init should exit successfully')
       assert_match(/try\(\) \{/, stdout)
       assert_match(/cd --path \"#{Regexp.escape(File.expand_path(dir))}\"/, stdout)
-      assert_match(/eval \"\$cmd\" \|\| echo \"\$cmd\";/, stdout)
+      assert_match(/case \"\$cmd\" in/m, stdout)
+      assert_match(/\*" \&\& "\*\) eval \"\$cmd\" ;;/, stdout)
+      assert_match(/printf %s \"\$cmd\"/, stdout)
     end
   end
 
@@ -24,7 +26,8 @@ class TestInitEval < Test::Unit::TestCase
       assert(status.success?, 'init should exit successfully')
       assert_match(/^function try/m, stdout)
       assert_match(/cd --path \"#{Regexp.escape(File.expand_path(dir))}\"/, stdout)
-      assert_match(/string collect\)$/, stdout)
+      assert_match(/string collect\)/, stdout)
+      assert_match(/string match -r ' \&\& ' -- \$cmd/, stdout)
     end
   end
 end
