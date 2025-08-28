@@ -1,4 +1,4 @@
-# try - fresh directories for every vibe
+# Personal Organizator for Adhders - fresh directories for every vibe
 
 *Your experiments deserve a home.* 🏠
 
