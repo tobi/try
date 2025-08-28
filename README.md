@@ -145,9 +145,10 @@ The `.git` suffix is automatically removed from URLs when generating directory n
 
 ### Keyboard Shortcuts
 
-- `↑/↓` or `Ctrl-P/N` - Navigate
+- `↑/↓` or `Ctrl-P/N/J/K` - Navigate
 - `Enter` - Select or create
 - `Backspace` - Delete character
+- `Ctrl-D` - Delete directory (with confirmation)
 - `ESC` - Cancel
 - Just type to filter
 
