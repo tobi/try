@@ -858,6 +858,7 @@ if __FILE__ == $0
       { type: 'mkdir' },
       { type: 'echo', msg: "Using {highlight}git clone{reset_fg} to create this trial from #{git_uri}." },
       { type: 'git-clone', uri: git_uri },
+      { type: 'touch'},
       { type: 'cd' }
     ]
   end
@@ -908,6 +909,10 @@ if __FILE__ == $0
   end
 
   def cmd_cd!(args, tries_path, and_type, and_exit, and_keys, and_confirm)
+    if args.first == "clone"
+      return cmd_clone!(args[1..-1] || [], tries_path)
+    end
+
     # Support: try . [name] and try ./path [name]
     if args.first && args.first.start_with?('.')
       path_arg = args.shift
