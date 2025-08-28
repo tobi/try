@@ -24,4 +24,13 @@ class TestCloneAndUrlName < Test::Unit::TestCase
       assert_match(/my-fork/, stdout, 'should use the provided custom name in path')
     end
   end
+
+  def test_cd_clone_wrapper_emits_clone_script
+    Dir.mktmpdir do |dir|
+      stdout, _stderr, _status = run_cmd('cd', 'clone', 'https://github.com/tobi/try.git', 'my-fork', '--path', dir)
+      assert_match(/mkdir -p '\S+my-fork'/, stdout)
+      assert_match(/git clone 'https:\/\/github\.com\/tobi\/try\.git' '\S+my-fork'/, stdout)
+      assert_match(/cd '\S+my-fork'/, stdout)
+    end
+  end
 end
