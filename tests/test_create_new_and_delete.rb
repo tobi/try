@@ -38,6 +38,26 @@ class TestCreateNewAndDelete < Test::Unit::TestCase
     end
   end
 
+  def test_ctrl_j_k_navigation
+    Dir.mktmpdir do |dir|
+      # Create some test directories
+      first_dir = '2025-08-14-first'
+      second_dir = '2025-08-15-second'
+      FileUtils.mkdir_p(File.join(dir, first_dir))
+      FileUtils.mkdir_p(File.join(dir, second_dir))
+
+      # Test Ctrl-J (down) navigation - starts at index 0, goes to index 1 (second directory)
+      stdout, _stderr, _status = run_cmd('cd', '--and-keys', 'CTRL-J,ENTER', '--path', dir)
+      # Should select the second directory (2025-08-15-second)
+      assert_match(/cd '#{Regexp.escape(File.join(dir, second_dir))}'/, stdout, 'Ctrl-J should navigate down to second directory')
+
+      # Test Ctrl-K (up) navigation - go down then up, should be back to first directory
+      stdout, _stderr, _status = run_cmd('cd', '--and-keys', 'CTRL-J,CTRL-K,ENTER', '--path', dir)
+      # Should go down then up and select first directory
+      assert_match(/cd '#{Regexp.escape(File.join(dir, first_dir))}'/, stdout, 'Ctrl-K should navigate up after going down')
+    end
+  end
+
   def test_delete_flow_cancel
     Dir.mktmpdir do |dir|
       name = '2025-08-14-keep-me'

@@ -304,15 +304,7 @@ class TrySelector
       key = read_key
 
       case key
-      when "\e[A", "\x10"  # Up arrow or Ctrl-P
-        @cursor_pos = [@cursor_pos - 1, 0].max
-      when "\e[B", "\x0E"  # Down arrow or Ctrl-N
-        @cursor_pos = [@cursor_pos + 1, total_items - 1].min
-      when "\e[C"  # Right arrow - ignore
-        # Do nothing
-      when "\e[D"  # Left arrow - ignore
-        # Do nothing
-      when "\r", "\n"  # Enter
+      when "\r"  # Enter (carriage return)
         if @cursor_pos < tries.length
           handle_selection(tries[@cursor_pos])
         else
@@ -320,6 +312,14 @@ class TrySelector
           handle_create_new
         end
         break if @selected
+      when "\e[A", "\x10", "\x0B"  # Up arrow or Ctrl-P or Ctrl-K
+        @cursor_pos = [@cursor_pos - 1, 0].max
+      when "\e[B", "\x0E", "\n"  # Down arrow or Ctrl-N or Ctrl-J
+        @cursor_pos = [@cursor_pos + 1, total_items - 1].min
+      when "\e[C"  # Right arrow - ignore
+        # Do nothing
+      when "\e[D"  # Left arrow - ignore
+        # Do nothing
       when "\x7F", "\b"  # Backspace
         @input_buffer = @input_buffer[0...-1] if @input_buffer.length > 0
         @cursor_pos = 0
@@ -490,7 +490,7 @@ class TrySelector
       UI.puts "{highlight}#{@delete_status}{reset}"
       @delete_status = nil  # Clear after showing
     else
-      UI.puts "{dim_text}↑↓: Navigate  Enter: Select  Ctrl-D: Delete  ESC: Cancel{reset}"
+      UI.puts "{dim_text}↑↓/Ctrl-P,N,J,K: Navigate  Enter: Select  Ctrl-D: Delete  ESC: Cancel{reset}"
     end
 
     # Flush the double buffer
@@ -824,6 +824,8 @@ if __FILE__ == $0
       when 'CTRL-D', 'CTRLD' then keys << "\x04"
       when 'CTRL-P', 'CTRLP' then keys << "\x10"
       when 'CTRL-N', 'CTRLN' then keys << "\x0E"
+      when 'CTRL-J', 'CTRLJ' then keys << "\n"
+      when 'CTRL-K', 'CTRLK' then keys << "\x0B"
       when /^TYPE=(.*)$/
         $1.each_char { |ch| keys << ch }
       else
