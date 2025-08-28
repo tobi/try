@@ -787,7 +787,6 @@ if __FILE__ == $0
     return nil unless parsed
 
     date_prefix = Time.now.strftime("%Y-%m-%d")
-    host_part = parsed[:host].split('.').first  # github.com -> github
     "#{date_prefix}-#{parsed[:user]}-#{parsed[:repo]}"
   end
 
@@ -796,9 +795,9 @@ if __FILE__ == $0
     arg.match?(%r{^(https?://|git@)}) || arg.include?('github.com') || arg.include?('gitlab.com') || arg.end_with?('.git')
   end
 
-  command = ARGV.shift
-
   tries_path = extract_option_with_value!(ARGV, '--path') || TrySelector::TRY_PATH
+  
+  command = ARGV.shift
   tries_path = File.expand_path(tries_path)
 
   # Test-only flags (undocumented; aid acceptance tests)
@@ -873,7 +872,15 @@ if __FILE__ == $0
     bash_or_zsh_script = <<~SHELL
       try() {
         script_path='#{script_path}'
-        cmd=$(/usr/bin/env ruby "$script_path" cd#{path_arg} "$@" 2>/dev/tty)
+        # Check if first argument is a known command
+        case "$1" in
+          clone|worktree|init)
+            cmd=$(/usr/bin/env ruby "$script_path"#{path_arg} "$@" 2>/dev/tty)
+            ;;
+          *)
+            cmd=$(/usr/bin/env ruby "$script_path" cd#{path_arg} "$@" 2>/dev/tty)
+            ;;
+        esac
         rc=$?
         if [ $rc -eq 0 ]; then
           case "$cmd" in
@@ -889,7 +896,13 @@ if __FILE__ == $0
     fish_script = <<~SHELL
       function try
         set -l script_path "#{script_path}"
-        set -l cmd (/usr/bin/env ruby "$script_path" cd#{path_arg} $argv 2>/dev/tty | string collect)
+        # Check if first argument is a known command
+        switch $argv[1]
+          case clone worktree init
+            set -l cmd (/usr/bin/env ruby "$script_path"#{path_arg} $argv 2>/dev/tty | string collect)
+          case '*'
+            set -l cmd (/usr/bin/env ruby "$script_path" cd#{path_arg} $argv 2>/dev/tty | string collect)
+        end
         set -l rc $status
         if test $rc -eq 0
           if string match -r ' && ' -- $cmd
