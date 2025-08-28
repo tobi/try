@@ -872,8 +872,8 @@ if __FILE__ == $0
       try() {
         script_path='#{script_path}'
         cmd=$(/usr/bin/env ruby "$script_path" cd#{path_arg} "$@" 2>/dev/tty)
-        status=$?
-        if [ $status -eq 0 ]; then
+        rc=$?
+        if [ $rc -eq 0 ]; then
           case "$cmd" in
             *" && "*) eval "$cmd" ;;
             *) printf %s "$cmd" ;;
@@ -888,8 +888,8 @@ if __FILE__ == $0
       function try
         set -l script_path "#{script_path}"
         set -l cmd (/usr/bin/env ruby "$script_path" cd#{path_arg} $argv 2>/dev/tty | string collect)
-        set -l status $status
-        if test $status -eq 0
+        set -l rc $status
+        if test $rc -eq 0
           if string match -r ' && ' -- $cmd
             eval $cmd
           else
