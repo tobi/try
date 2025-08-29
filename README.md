@@ -27,7 +27,7 @@ curl -sL https://raw.githubusercontent.com/tobi/try/refs/heads/main/try.rb > ~/.
 chmod +x ~/.local/try.rb
 
 # Add to your shell (bash/zsh)
-echo 'eval "$(~/.local/try.rb init ~/src/tries)"' >> ~/.zshrc
+echo 'eval "$(ruby ~/.local/try.rb init ~/src/tries)"' >> ~/.zshrc
 
 # for fish shell users
 echo 'eval "$(~/.local/try.rb init ~/src/tries | string collect)"' >> ~/.config/fish/config.fish
