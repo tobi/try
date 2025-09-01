@@ -61,16 +61,15 @@
           version = "0.1.0";
 
           src = inputs.self;
-          nativeBuildInputs = [ pkgs.makeWrapper ];
-          propagatedBuildInputs = [ ruby ];
+          nativeBuildInputs = [ pkgs.makeBinaryWrapper ];
 
           installPhase = ''
             mkdir -p $out/bin
-            cp try.rb $out/bin/try-unwrapped
-            chmod +x $out/bin/try-unwrapped
+            cp try.rb $out/bin/try
+            chmod +x $out/bin/try
 
-            makeWrapper ${ruby}/bin/ruby $out/bin/try \
-              --add-flags "$out/bin/try-unwrapped"
+            wrapProgram $out/bin/try \
+              --prefix PATH : ${ruby}/bin
           '';
 
           meta = with pkgs.lib; {
