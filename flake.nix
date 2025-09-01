@@ -22,8 +22,14 @@
 
               package = mkOption {
                 type = types.package;
-                default = inputs.self.packages.${pkgs.system}.default;
+                default = inputs.self.packages.${pkgs.system}.default.override { ruby = cfg.rubyPackage; };
                 description = "The try package to use.";
+              };
+
+              rubyPackage = mkOption {
+                type = types.package;
+                default = pkgs.ruby;
+                description = "The Ruby package to use for the try application.";
               };
 
               path = mkOption {
@@ -50,18 +56,21 @@
       };
 
       perSystem = { config, self', inputs', pkgs, system, ... }: {
-        packages.default = pkgs.stdenv.mkDerivation rec {
+        packages.default = pkgs.callPackage ({ ruby ? pkgs.ruby }: pkgs.stdenv.mkDerivation rec {
           pname = "try";
           version = "0.1.0";
 
           src = inputs.self;
-
-          buildInputs = [ pkgs.ruby ];
+          nativeBuildInputs = [ pkgs.makeWrapper ];
+          propagatedBuildInputs = [ ruby ];
 
           installPhase = ''
             mkdir -p $out/bin
-            cp try.rb $out/bin/try
-            chmod +x $out/bin/try
+            cp try.rb $out/bin/try-unwrapped
+            chmod +x $out/bin/try-unwrapped
+
+            makeWrapper ${ruby}/bin/ruby $out/bin/try \
+              --add-flags "$out/bin/try-unwrapped"
           '';
 
           meta = with pkgs.lib; {
@@ -71,7 +80,7 @@
             maintainers = [ ];
             platforms = platforms.unix;
           };
-        };
+        }) {};
 
         apps.default = {
           type = "app";
