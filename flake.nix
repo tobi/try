@@ -22,14 +22,17 @@
 
               package = mkOption {
                 type = types.package;
-                default = inputs.self.packages.${pkgs.system}.default.override { ruby = cfg.rubyPackage; };
-                description = "The try package to use.";
-              };
-
-              rubyPackage = mkOption {
-                type = types.package;
-                default = pkgs.ruby;
-                description = "The Ruby package to use for the try application.";
+                default = inputs.self.packages.${pkgs.system}.default;
+                defaultText = literalExpression "inputs.self.packages.\${pkgs.system}.default";
+                description = ''
+                  The try package to use. Can be overridden to customize Ruby version:
+                  
+                  ```nix
+                  programs.try.package = inputs.try.packages.${"$"}{pkgs.system}.default.override {
+                    ruby = pkgs.ruby_3_3;
+                  };
+                  ```
+                '';
               };
 
               path = mkOption {
