@@ -45,6 +45,8 @@ class TestCreateNewAndDelete < Test::Unit::TestCase
       second_dir = '2025-08-15-second'
       FileUtils.mkdir_p(File.join(dir, first_dir))
       FileUtils.mkdir_p(File.join(dir, second_dir))
+      # Bump mtime of the first directory so it appears first by recency
+      FileUtils.touch(File.join(dir, first_dir, '.mtime_bump'))
 
       # Test Ctrl-J (down) navigation - starts at index 0, goes to index 1 (second directory)
       stdout, _stderr, _status = run_cmd('cd', '--and-keys', 'CTRL-J,ENTER', '--path', dir)
