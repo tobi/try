@@ -698,7 +698,7 @@ if __FILE__ == $0
       {h2}Usage:{text}
 
         init [--path PATH]  # Initialize shell function for aliasing
-        cd [QUERY] [name?]  # Interactive selector; Git URL shorthand supported
+        cd [QUERY] [name?]  # Interactive selector; Git URL and PR shorthand supported
         clone <git-uri> [name]  # Clone git repo into date-prefixed directory
         worktree dir [name]  # Create date-prefixed dir; add worktree from CWD if git repo
         worktree <repo-path> [name]  # Same as above, but source repo is <repo-path>
@@ -713,6 +713,17 @@ if __FILE__ == $0
 
         try https://github.com/tobi/try.git
         # Shorthand for clone (same as first example)
+
+      {h2}PR Examples:{text}
+
+        try owner/repo#123
+        # PR #123 in owner/repo: 2025-09-06-owner-repo-pr123
+
+        try https://github.com/owner/repo/pull/123
+        # Full PR URL: 2025-09-06-owner-repo-pr123
+
+        try 123 my-test
+        # Custom name (when in git repo): 2025-09-06-my-test
 
       {h2}Worktree Examples:{text}
 
@@ -780,6 +791,76 @@ if __FILE__ == $0
     end
   end
 
+  def parse_pr_reference(pr_ref)
+    # Handle different PR reference formats
+    if pr_ref.match(%r{^https?://github\.com/([^/]+)/([^/]+)/pull/(\d+)})
+      # https://github.com/owner/repo/pull/123
+      user, repo, pr_number = $1, $2, $3
+      return { user: user, repo: repo, pr_number: pr_number.to_i, host: 'github.com' }
+    elsif pr_ref.match(%r{^([^/]+)/([^/]+)#(\d+)$})
+      # owner/repo#123
+      user, repo, pr_number = $1, $2, $3
+      return { user: user, repo: repo, pr_number: pr_number.to_i, host: 'github.com' }
+    elsif pr_ref.match(%r{^(\d+)$})
+      # Just a number - needs to be in a git repo context
+      pr_number = $1.to_i
+      return { pr_number: pr_number, needs_repo_context: true }
+    else
+      return nil
+    end
+  end
+
+
+  def get_pr_info(user, repo, pr_number, host = 'github.com')
+    return nil unless host == 'github.com'
+    
+    # Use GitHub API to get complete PR information
+    api_url = "https://api.github.com/repos/#{user}/#{repo}/pulls/#{pr_number}"
+    
+    begin
+      # Use curl to make the API request
+      json_response = `curl -s -H "Accept: application/vnd.github.v3+json" "#{api_url}"`
+      return nil if $?.exitstatus != 0
+      
+      # Simple regex-based JSON parsing for the fields we need
+      pr_info = {}
+      
+      # Find all clone_url and ref values, then match them to head/base
+      clone_urls = json_response.scan(/"clone_url":\s*"([^"]+)"/)
+      refs = json_response.scan(/"ref":\s*"([^"]+)"/)
+      full_names = json_response.scan(/"full_name":\s*"([^"]+)"/)
+      
+      # The API returns head first, then base in the response
+      if clone_urls.length >= 2
+        pr_info[:head_clone_url] = clone_urls[0][0]
+        pr_info[:base_clone_url] = clone_urls[1][0]
+      end
+      
+      if refs.length >= 2
+        pr_info[:head_branch] = refs[0][0] 
+        pr_info[:base_branch] = refs[1][0]
+      end
+      
+      if full_names.length >= 2
+        pr_info[:head_repo] = full_names[0][0]
+        pr_info[:base_repo] = full_names[1][0]
+      end
+      
+      return pr_info
+    rescue => e
+      warn "Warning: Could not fetch PR info: #{e.message}" if ENV['DEBUG']
+      return nil
+    end
+  end
+
+  def get_repo_from_git_remote
+    # Try to get repo info from git remote
+    remote_url = `git config --get remote.origin.url 2>/dev/null`.strip
+    return nil if $?.exitstatus != 0 || remote_url.empty?
+    
+    parse_git_uri(remote_url)
+  end
+
   def generate_clone_directory_name(git_uri, custom_name = nil)
     return custom_name if custom_name && !custom_name.empty?
 
@@ -789,6 +870,15 @@ if __FILE__ == $0
     date_prefix = Time.now.strftime("%Y-%m-%d")
     host_part = parsed[:host].split('.').first  # github.com -> github
     "#{date_prefix}-#{parsed[:user]}-#{parsed[:repo]}"
+  end
+
+  def generate_pr_directory_name(user, repo, pr_number, custom_name = nil, host = 'github.com')
+    return custom_name if custom_name && !custom_name.empty?
+
+    date_prefix = Time.now.strftime("%Y-%m-%d")
+    
+    # Use consistent pr-number format similar to clone repos
+    "#{date_prefix}-#{user}-#{repo}-pr#{pr_number}"
   end
 
   def is_git_uri?(arg)
@@ -861,6 +951,94 @@ if __FILE__ == $0
       { type: 'touch'},
       { type: 'cd' }
     ]
+  end
+
+  def cmd_pr!(args, tries_path)
+    pr_ref = args.shift
+    custom_name = args.join(' ').strip
+    custom_name = nil if custom_name.empty?
+
+    unless pr_ref
+      warn "Error: PR reference required for pr command"
+      warn "Usage: try <owner/repo#123 | https://github.com/owner/repo/pull/123 | 123> [custom-name]"
+      exit 1
+    end
+
+    parsed_pr = parse_pr_reference(pr_ref)
+    unless parsed_pr
+      warn "Error: Unable to parse PR reference: #{pr_ref}"
+      warn "Supported formats:"
+      warn "  - owner/repo#123"
+      warn "  - https://github.com/owner/repo/pull/123"
+      warn "  - 123 (when in a git repository)"
+      exit 1
+    end
+
+    # Handle case where only PR number is provided
+    if parsed_pr[:needs_repo_context]
+      repo_info = get_repo_from_git_remote
+      unless repo_info
+        warn "Error: PR number provided but not in a git repository"
+        warn "Either provide full PR reference (owner/repo#123) or run from a git repository"
+        exit 1
+      end
+      parsed_pr[:user] = repo_info[:user]
+      parsed_pr[:repo] = repo_info[:repo]
+      parsed_pr[:host] = repo_info[:host]
+    end
+
+    # Get PR information from GitHub API to handle forks correctly
+    pr_info = get_pr_info(parsed_pr[:user], parsed_pr[:repo], parsed_pr[:pr_number], parsed_pr[:host])
+    
+    # Determine what to clone and checkout
+    if pr_info && pr_info[:head_clone_url] && pr_info[:head_branch]
+      # Fork PR: clone the fork repo and checkout the fork branch
+      clone_url = pr_info[:head_clone_url]
+      checkout_branch = pr_info[:head_branch]
+      source_repo = pr_info[:head_repo] || "#{parsed_pr[:user]}/#{parsed_pr[:repo]}"
+    else
+      # Fallback: same repo PR or API failure - clone base repo and fetch PR
+      clone_url = "https://#{parsed_pr[:host]}/#{parsed_pr[:user]}/#{parsed_pr[:repo]}.git"
+      checkout_branch = nil  # Will use PR fetch method
+      source_repo = "#{parsed_pr[:user]}/#{parsed_pr[:repo]}"
+    end
+
+    dir_name = generate_pr_directory_name(
+      parsed_pr[:user], 
+      parsed_pr[:repo], 
+      parsed_pr[:pr_number], 
+      custom_name,
+      parsed_pr[:host]
+    )
+    
+    unless dir_name
+      warn "Error: Unable to generate directory name for PR"
+      exit 1
+    end
+
+    full_path = File.join(tries_path, dir_name)
+    
+    tasks = [
+      { type: 'target', path: full_path },
+      { type: 'mkdir' },
+      { type: 'echo', msg: "Using {highlight}git clone{reset_fg} to create this trial from PR ##{parsed_pr[:pr_number]} in #{parsed_pr[:user]}/#{parsed_pr[:repo]}." },
+      { type: 'git-clone', uri: clone_url }
+    ]
+    
+    if checkout_branch
+      # Fork PR: checkout the specific branch
+      tasks << { type: 'git-checkout-branch', branch: checkout_branch }
+    else
+      # Same repo PR: fetch and checkout PR branch
+      tasks << { type: 'git-checkout-pr', user: parsed_pr[:user], repo: parsed_pr[:repo], pr_number: parsed_pr[:pr_number], host: parsed_pr[:host] }
+    end
+    
+    tasks += [
+      { type: 'touch'},
+      { type: 'cd' }
+    ]
+    
+    tasks
   end
 
   def cmd_init!(args, tries_path)
@@ -946,8 +1124,15 @@ if __FILE__ == $0
 
     search_term = args.join(' ')
 
+    # PR URL detection → redirect to PR workflow  
+    first_term = search_term.split.first
+    if first_term && parse_pr_reference(first_term)
+      # This is a PR URL, redirect to PR command
+      return cmd_pr!(args, tries_path)
+    end
+
     # Git URL shorthand → clone workflow
-    if is_git_uri?(search_term.split.first)
+    if is_git_uri?(first_term)
       git_uri, custom_name = search_term.split(/\s+/, 2)
       dir_name = generate_clone_directory_name(git_uri, custom_name)
       unless dir_name
@@ -1015,6 +1200,19 @@ if __FILE__ == $0
         parts << "mkdir -p #{q}"
       when 'git-clone'
         parts << "git clone '#{t[:uri]}' #{q}"
+      when 'git-checkout-pr'
+        # Fetch and checkout the PR branch
+        user = t[:user]
+        repo = t[:repo] 
+        pr_number = t[:pr_number]
+        host = t[:host] || 'github.com'
+        if host == 'github.com'
+          parts << "/usr/bin/env sh -c 'cd #{q} && git fetch origin pull/#{pr_number}/head:pr-#{pr_number} >/dev/null 2>&1 && git checkout pr-#{pr_number} >/dev/null 2>&1 || true'"
+        end
+      when 'git-checkout-branch'
+        # Checkout a specific branch (for fork PRs)
+        branch = t[:branch]
+        parts << "/usr/bin/env sh -c 'cd #{q} && git checkout #{branch} >/dev/null 2>&1 || true'"
       when 'git-worktree'
         if t[:repo]
           r = "'" + t[:repo].gsub("'", %q('"'"'')) + "'"
@@ -1145,9 +1343,19 @@ if __FILE__ == $0
     emit_tasks_script(tasks) if tasks
     exit 0
   else
-    warn "Unknown command: #{command}"
-    print_global_help
-    exit 2
+    # Check if the unknown command looks like a PR URL or git URI
+    # If so, treat it as an implicit 'cd' command
+    if command && (parse_pr_reference(command) || is_git_uri?(command))
+      # Put the command back into ARGV and call cmd_cd
+      ARGV.unshift(command)
+      tasks = cmd_cd!(ARGV, tries_path, and_type, and_exit, and_keys, and_confirm)
+      emit_tasks_script(tasks) if tasks
+      exit 0
+    else
+      warn "Unknown command: #{command}"
+      print_global_help
+      exit 2
+    end
   end
 
 end
