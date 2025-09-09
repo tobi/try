@@ -192,7 +192,7 @@ nix run github:tobi/try init ~/my-tries
 ### Quick start
 
 ```bash
-brew tap o6uoq/try
+brew tap tobi/try
 brew install try
 ```
 
