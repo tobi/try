@@ -187,6 +187,34 @@ nix run github:tobi/try init ~/my-tries
 }
 ```
 
+## Homebrew
+
+### Quick start
+
+```bash
+brew tap tobi/try
+brew install try
+```
+
+After installation, add to your shell:
+
+- Bash/Zsh:
+
+  ```bash
+  # default is ~/src/tries
+  eval "$(try init)"
+  # or pick a path
+  eval "$(try init ~/src/tries)"
+  ```
+
+- Fish:
+
+  ```fish
+  eval "(try init | string collect)"
+  # or pick a path
+  eval "(try init ~/src/tries | string collect)"
+  ```
+
 ## Why Ruby?
 
 - One file, no dependencies
