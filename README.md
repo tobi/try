@@ -30,7 +30,7 @@ chmod +x ~/.local/try.rb
 echo 'eval "$(~/.local/try.rb init ~/src/tries)"' >> ~/.zshrc
 
 # for fish shell users
-echo 'eval "$(~/.local/try.rb init ~/src/tries | string collect)"' >> ~/.config/fish/config.fish
+echo 'eval (~/.local/try.rb init ~/src/tries | string collect)' >> ~/.config/fish/config.fish
 ```
 
 ## The Problem
@@ -90,9 +90,9 @@ Not just substring matching - it's smart:
 - Fish:
 
   ```fish
-  eval "(~/.local/try.rb init | string collect)"
+  eval (~/.local/try.rb init | string collect)
   # or pick a path
-  eval "(~/.local/try.rb init ~/src/tries | string collect)"
+  eval (~/.local/try.rb init ~/src/tries | string collect)
   ```
 
 Notes:
