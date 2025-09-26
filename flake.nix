@@ -11,7 +11,7 @@
       systems = [ "x86_64-linux" "aarch64-linux" "x86_64-darwin" "aarch64-darwin" ];
 
       flake = {
-        homeManagerModules.default = { config, lib, pkgs, ... }:
+        homeModules.default = { config, lib, pkgs, ... }:
           with lib;
           let
             cfg = config.programs.try;
@@ -47,6 +47,11 @@
               '';
             };
           };
+
+        # Backwards compatibility - deprecated
+        homeManagerModules.default = builtins.trace 
+          "WARNING: homeManagerModules is deprecated and will be removed in a future version. Please use homeModules instead."
+          inputs.self.homeModules.default;
       };
 
       perSystem = { config, self', inputs', pkgs, system, ... }: {
