@@ -23,7 +23,16 @@
               package = mkOption {
                 type = types.package;
                 default = inputs.self.packages.${pkgs.system}.default;
-                description = "The try package to use.";
+                defaultText = literalExpression "inputs.self.packages.\${pkgs.system}.default";
+                description = ''
+                  The try package to use. Can be overridden to customize Ruby version:
+                  
+                  ```nix
+                  programs.try.package = inputs.try.packages.${"$"}{pkgs.system}.default.override {
+                    ruby = pkgs.ruby_3_3;
+                  };
+                  ```
+                '';
               };
 
               path = mkOption {
@@ -55,18 +64,20 @@
       };
 
       perSystem = { config, self', inputs', pkgs, system, ... }: {
-        packages.default = pkgs.stdenv.mkDerivation rec {
+        packages.default = pkgs.callPackage ({ ruby ? pkgs.ruby }: pkgs.stdenv.mkDerivation rec {
           pname = "try";
           version = "0.1.0";
 
           src = inputs.self;
-
-          buildInputs = [ pkgs.ruby ];
+          nativeBuildInputs = [ pkgs.makeBinaryWrapper ];
 
           installPhase = ''
             mkdir -p $out/bin
             cp try.rb $out/bin/try
             chmod +x $out/bin/try
+
+            wrapProgram $out/bin/try \
+              --prefix PATH : ${ruby}/bin
           '';
 
           meta = with pkgs.lib; {
@@ -76,7 +87,7 @@
             maintainers = [ ];
             platforms = platforms.unix;
           };
-        };
+        }) {};
 
         apps.default = {
           type = "app";
