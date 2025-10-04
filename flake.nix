@@ -26,7 +26,7 @@
                 defaultText = literalExpression "inputs.self.packages.\${pkgs.system}.default";
                 description = ''
                   The try package to use. Can be overridden to customize Ruby version:
-
+                  
                   ```nix
                   programs.try.package = inputs.try.packages.${"$"}{pkgs.system}.default.override {
                     ruby = pkgs.ruby_3_3;
@@ -56,35 +56,38 @@
               '';
             };
           };
+
+        # Backwards compatibility - deprecated
+        homeManagerModules.default = builtins.trace 
+          "WARNING: homeManagerModules is deprecated and will be removed in a future version. Please use homeModules instead."
+          inputs.self.homeModules.default;
       };
 
       perSystem = { config, self', inputs', pkgs, system, ... }: {
-        packages.default = pkgs.callPackage
-          ({ ruby ? pkgs.ruby }: pkgs.stdenv.mkDerivation rec {
-            pname = "try";
-            version = "0.1.0";
+        packages.default = pkgs.callPackage ({ ruby ? pkgs.ruby }: pkgs.stdenv.mkDerivation rec {
+          pname = "try";
+          version = "0.1.0";
 
-            src = inputs.self;
-            nativeBuildInputs = [ pkgs.makeBinaryWrapper ];
+          src = inputs.self;
+          nativeBuildInputs = [ pkgs.makeBinaryWrapper ];
 
-            installPhase = ''
-              mkdir -p $out/bin
-              cp try.rb $out/bin/try
-              chmod +x $out/bin/try
+          installPhase = ''
+            mkdir -p $out/bin
+            cp try.rb $out/bin/try
+            chmod +x $out/bin/try
 
-              wrapProgram $out/bin/try \
-                --prefix PATH : ${ruby}/bin
-            '';
+            wrapProgram $out/bin/try \
+              --prefix PATH : ${ruby}/bin
+          '';
 
-            meta = with pkgs.lib; {
-              description = "Fresh directories for every vibe - lightweight experiments for people with ADHD";
-              homepage = "https://github.com/tobi/try";
-              license = licenses.mit;
-              maintainers = [ ];
-              platforms = platforms.unix;
-            };
-          })
-          { };
+          meta = with pkgs.lib; {
+            description = "Fresh directories for every vibe - lightweight experiments for people with ADHD";
+            homepage = "https://github.com/tobi/try";
+            license = licenses.mit;
+            maintainers = [ ];
+            platforms = platforms.unix;
+          };
+        }) {};
 
         apps.default = {
           type = "app";
