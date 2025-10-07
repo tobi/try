@@ -897,12 +897,13 @@ if __FILE__ == $0
     fish_script = <<~SHELL
       function try
         set -l script_path "#{script_path}"
+        set -l cmd ""
         # Check if first argument is a known command
         switch $argv[1]
           case clone worktree init
-            set -l cmd (/usr/bin/env ruby "$script_path"#{path_arg} $argv 2>/dev/tty | string collect)
+            set cmd (/usr/bin/env ruby "$script_path"#{path_arg} $argv 2>/dev/tty | string collect)
           case '*'
-            set -l cmd (/usr/bin/env ruby "$script_path" cd#{path_arg} $argv 2>/dev/tty | string collect)
+            set cmd (/usr/bin/env ruby "$script_path" cd#{path_arg} $argv 2>/dev/tty | string collect)
         end
         set -l rc $status
         if test $rc -eq 0
