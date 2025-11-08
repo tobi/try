@@ -1,6 +1,6 @@
 require 'test/unit'
 require 'stringio'
-require_relative '../try.rb'
+require_relative '../tryout.rb'
 
 class TestUITokens < Test::Unit::TestCase
 

@@ -4,7 +4,7 @@ require 'tmpdir'
 
 class TestCloneAndUrlName < Test::Unit::TestCase
   def run_cmd(*args)
-    cmd = [RbConfig.ruby, File.expand_path('../try.rb', __dir__), *args]
+    cmd = [RbConfig.ruby, File.expand_path('../tryout.rb', __dir__), *args]
     Open3.capture3(*cmd)
   end
 

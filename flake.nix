@@ -1,5 +1,5 @@
 {
-  description = "try - fresh directories for every vibe";
+  description = "tryout - fresh directories for every vibe";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
@@ -14,21 +14,21 @@
         homeModules.default = { config, lib, pkgs, ... }:
           with lib;
           let
-            cfg = config.programs.try;
+            cfg = config.programs.tryoutout;
           in
           {
-            options.programs.try = {
-              enable = mkEnableOption "try - fresh directories for every vibe";
+            options.programs.tryout = {
+              enable = mkEnableOption "tryout - fresh directories for every vibe";
 
               package = mkOption {
                 type = types.package;
                 default = inputs.self.packages.${pkgs.system}.default;
                 defaultText = literalExpression "inputs.self.packages.\${pkgs.system}.default";
                 description = ''
-                  The try package to use. Can be overridden to customize Ruby version:
+                  The tryout package to use. Can be overridden to customize Ruby version:
                   
                   ```nix
-                  programs.try.package = inputs.try.packages.${"$"}{pkgs.system}.default.override {
+                  programs.tryout.package = inputs.tryout.packages.${"$"}{pkgs.system}.default.override {
                     ruby = pkgs.ruby_3_3;
                   };
                   ```
@@ -38,21 +38,21 @@
               path = mkOption {
                 type = types.str;
                 default = "~/src/tries";
-                description = "Path where try directories will be stored.";
+                description = "Path where tryout directories will be stored.";
               };
             };
 
             config = mkIf cfg.enable {
               programs.bash.initExtra = mkIf config.programs.bash.enable ''
-                eval "$(${cfg.package}/bin/try init ${cfg.path})"
+                eval "$(${cfg.package}/bin/tryout init ${cfg.path})"
               '';
 
               programs.zsh.initContent = mkIf config.programs.zsh.enable ''
-                eval "$(${cfg.package}/bin/try init ${cfg.path})"
+                eval "$(${cfg.package}/bin/tryout init ${cfg.path})"
               '';
 
               programs.fish.shellInit = mkIf config.programs.fish.enable ''
-                eval (${cfg.package}/bin/try init ${cfg.path} | string collect)
+                eval (${cfg.package}/bin/tryout init ${cfg.path} | string collect)
               '';
             };
           };
@@ -65,7 +65,7 @@
 
       perSystem = { config, self', inputs', pkgs, system, ... }: {
         packages.default = pkgs.callPackage ({ ruby ? pkgs.ruby }: pkgs.stdenv.mkDerivation rec {
-          pname = "try";
+          pname = "tryout";
           version = "0.1.0";
 
           src = inputs.self;
@@ -73,10 +73,10 @@
 
           installPhase = ''
             mkdir -p $out/bin
-            cp try.rb $out/bin/try
-            chmod +x $out/bin/try
+            cp tryout.rb $out/bin/tryout
+            chmod +x $out/bin/tryout
 
-            wrapProgram $out/bin/try \
+            wrapProgram $out/bin/tryout \
               --prefix PATH : ${ruby}/bin
           '';
 
@@ -91,7 +91,7 @@
 
         apps.default = {
           type = "app";
-          program = "${self'.packages.default}/bin/try";
+          program = "${self'.packages.default}/bin/tryout";
         };
       };
     };

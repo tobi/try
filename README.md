@@ -1,4 +1,4 @@
-# try - fresh directories for every vibe
+# tryout - fresh directories for every vibe
 
 *Your experiments deserve a home.* 🏠
 
@@ -6,7 +6,7 @@
 
 Ever find yourself with 50 directories named `test`, `test2`, `new-test`, `actually-working-test`, scattered across your filesystem? Or worse, just coding in `/tmp` and losing everything?
 
-**try** is here for your beautifully chaotic mind.
+**tryout** is here for your beautifully chaotic mind.
 
 # What it does 
 
@@ -21,16 +21,16 @@ Instantly navigate through all your experiment directories with:
 ## Quick Start
 
 ```bash
-curl -sL https://raw.githubusercontent.com/tobi/try/refs/heads/main/try.rb > ~/.local/try.rb
+curl -sL https://raw.githubusercontent.com/tobi/try/refs/heads/main/tryout.rb > ~/.local/tryout.rb
 
-# Make "try" executable so it can be run directly
-chmod +x ~/.local/try.rb
+# Make "tryout" executable so it can be run directly
+chmod +x ~/.local/tryout.rb
 
 # Add to your shell (bash/zsh)
-echo 'eval "$(ruby ~/.local/try.rb init ~/src/tries)"' >> ~/.zshrc
+echo 'eval "$(ruby ~/.local/tryout.rb init ~/src/tries)"' >> ~/.zshrc
 
 # for fish shell users
-echo 'eval (~/.local/try.rb init ~/src/tries | string collect)' >> ~/.config/fish/config.fish
+echo 'eval (~/.local/tryout.rb init ~/src/tries | string collect)' >> ~/.config/fish/config.fish
 ```
 
 ## The Problem
@@ -42,7 +42,7 @@ You're learning Redis. You create `/tmp/redis-test`. Then `~/Desktop/redis-actua
 All your experiments in one place, with instant fuzzy search:
 
 ```bash
-$ try pool
+$ tryout pool
 → 2025-08-14-redis-connection-pool    2h, 18.5
   2025-08-03-thread-pool              3d, 12.1
   2025-07-22-db-pooling               2w, 8.3
@@ -72,7 +72,7 @@ Not just substring matching - it's smart:
 - Dark mode by default (because obviously)
 
 ### 📁 Organized Chaos
-- Everything lives in `~/src/tries` (configurable via `TRY_PATH`)
+- Everything lives in `~/src/tries` (configurable via `TRYOUT_PATH`)
 - Auto-prefixes with dates: `2025-08-17-your-idea`
 - Skip the date prompt if you already typed a name
 
@@ -82,56 +82,56 @@ Not just substring matching - it's smart:
 
   ```bash
   # default is ~/src/tries
-  eval "$(~/.local/try.rb init)"
+  eval "$(~/.local/tryout.rb init)"
   # or pick a path
-  eval "$(~/.local/try.rb init ~/src/tries)"
+  eval "$(~/.local/tryout.rb init ~/src/tries)"
   ```
 
 - Fish:
 
   ```fish
-  eval (~/.local/try.rb init | string collect)
+  eval (~/.local/tryout.rb init | string collect)
   # or pick a path
-  eval (~/.local/try.rb init ~/src/tries | string collect)
+  eval (~/.local/tryout.rb init ~/src/tries | string collect)
   ```
 
 Notes:
-- The runtime commands printed by `try` are shell-neutral (absolute paths, quoted). Only the small wrapper function differs per shell.
+- The runtime commands printed by `tryout` are shell-neutral (absolute paths, quoted). Only the small wrapper function differs per shell.
 
 ## Usage
 
 ```bash
-try                                          # Browse all experiments
-try redis                                    # Jump to redis experiment or create new
-try new api                                  # Start with "2025-08-17-new-api"
-try . [name]                                   # Create a dated worktree dir for current repo
-try ./path/to/repo [name]                      # Use another repo as the worktree source
-try worktree dir [name]                        # Same as above, explicit CLI form
-try clone https://github.com/user/repo.git  # Clone repo into date-prefixed directory
-try https://github.com/user/repo.git        # Shorthand for clone (same as above)
-try --help                                   # See all options
+tryout                                          # Browse all experiments
+tryout redis                                    # Jump to redis experiment or create new
+tryout new api                                  # Start with "2025-08-17-new-api"
+tryout . [name]                                 # Create a dated worktree dir for current repo
+tryout ./path/to/repo [name]                    # Use another repo as the worktree source
+tryout worktree dir [name]                      # Same as above, explicit CLI form
+tryout clone https://github.com/user/repo.git  # Clone repo into date-prefixed directory
+tryout https://github.com/user/repo.git        # Shorthand for clone (same as above)
+tryout --help                                   # See all options
 ```
 
-Notes on worktrees (`try .` / `try worktree dir`):
+Notes on worktrees (`tryout .` / `tryout worktree dir`):
 - With a custom [name], uses that; otherwise uses cwd’s basename. Both are prefixed with today’s date.
 - Inside a Git repo: adds a detached HEAD git worktree to the created directory.
 - Outside a repo: simply creates the directory and changes into it.
 
 ### Git Repository Cloning
 
-**try** can automatically clone git repositories into properly named experiment directories:
+**tryout** can automatically clone git repositories into properly named experiment directories:
 
 ```bash
 # Clone with auto-generated directory name
-try clone https://github.com/tobi/try.git
+tryout clone https://github.com/tobi/try.git
 # Creates: 2025-08-27-tobi-try
 
 # Clone with custom name
-try clone https://github.com/tobi/try.git my-fork
+tryout clone https://github.com/tobi/try.git my-fork
 # Creates: my-fork
 
 # Shorthand syntax (no need to type 'clone')
-try https://github.com/tobi/try.git
+tryout https://github.com/tobi/try.git
 # Creates: 2025-08-27-tobi-try
 ```
 
@@ -154,10 +154,10 @@ The `.git` suffix is automatically removed from URLs when generating directory n
 
 ## Configuration
 
-Set `TRY_PATH` to change where experiments are stored:
+Set `TRYOUT_PATH` to change where experiments are stored:
 
 ```bash
-export TRY_PATH=~/code/sketches
+export TRYOUT_PATH=~/code/sketches
 ```
 
 Default: `~/src/tries`
@@ -167,20 +167,20 @@ Default: `~/src/tries`
 ### Quick start
 
 ```bash
-nix run github:tobi/try
-nix run github:tobi/try -- --help
-nix run github:tobi/try init ~/my-tries
+nix run github:tobi/tryout
+nix run github:tobi/tryout -- --help
+nix run github:tobi/tryout init ~/my-tries
 ```
 
 ### Home Manager
 
 ```nix
 {
-  inputs.try.url = "github:tobi/try";
+  inputs.tryout.url = "github:tobi/try";
   
-  imports = [ inputs.try.homeManagerModules.default ];
+  imports = [ inputs.tryout.homeManagerModules.default ];
   
-  programs.try = {
+  programs.tryout = {
     enable = true;
     path = "~/experiments";  # optional, defaults to ~/src/tries
   };
@@ -192,8 +192,8 @@ nix run github:tobi/try init ~/my-tries
 ### Quick start
 
 ```bash
-brew tap tobi/try
-brew install try
+brew tap tobi/tryout
+brew install tryout
 ```
 
 After installation, add to your shell:
@@ -202,17 +202,17 @@ After installation, add to your shell:
 
   ```bash
   # default is ~/src/tries
-  eval "$(try init)"
+  eval "$(tryout init)"
   # or pick a path
-  eval "$(try init ~/src/tries)"
+  eval "$(tryout init ~/src/tries)"
   ```
 
 - Fish:
 
   ```fish
-  eval "(try init | string collect)"
+  eval "(tryout init | string collect)"
   # or pick a path
-  eval "(try init ~/src/tries | string collect)"
+  eval "(tryout init ~/src/tries | string collect)"
   ```
 
 ## Why Ruby?
