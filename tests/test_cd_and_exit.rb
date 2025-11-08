@@ -6,7 +6,9 @@ require 'fileutils'
 class TestCdAndExit < Test::Unit::TestCase
   def run_cmd(*args)
     cmd = [RbConfig.ruby, File.expand_path('../try.rb', __dir__), *args]
-    Open3.capture3(*cmd)
+    stdout, stderr, status = Open3.capture3(*cmd)
+    # Force encoding to UTF-8 to handle ANSI escape sequences
+    [stdout.force_encoding('UTF-8'), stderr.force_encoding('UTF-8'), status]
   end
 
   def test_tui_renders_with_and_exit_and_type

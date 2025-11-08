@@ -6,7 +6,9 @@ require 'fileutils'
 class TestCreateNewAndDelete < Test::Unit::TestCase
   def run_cmd(*args)
     cmd = [RbConfig.ruby, File.expand_path('../try.rb', __dir__), *args]
-    Open3.capture3(*cmd)
+    stdout, stderr, status = Open3.capture3(*cmd)
+    # Force encoding to UTF-8 to handle ANSI escape sequences
+    [stdout.force_encoding('UTF-8'), stderr.force_encoding('UTF-8'), status]
   end
 
   def test_create_new_generates_mkdir_script
@@ -73,6 +75,44 @@ class TestCreateNewAndDelete < Test::Unit::TestCase
       assert_match(/Delete Directory/, clean)
       assert_match(/Delete cancelled/, clean)
       assert(File.exist?(path), 'directory should still exist')
+    end
+  end
+
+  def test_delete_current_directory_gracefully
+    Dir.mktmpdir do |dir|
+      # Create a try directory
+      name = '2025-08-14-delete-current'
+      path = File.join(dir, name)
+      FileUtils.mkdir_p(path)
+      
+      # Change to the directory we're about to delete
+      original_dir = Dir.pwd
+      begin
+        Dir.chdir(path)
+        
+        # Now delete it - this should handle the case gracefully
+        stdout, stderr, _status = run_cmd('cd', '--and-type', 'delete-current', '--and-keys', 'CTRL-D,ESC', '--and-confirm', 'YES', '--path', dir)
+        combined = stdout.to_s + stderr.to_s
+        clean = combined.gsub(/\e\[[0-9;?]*[ -\/]*[@-~]/, '')
+        
+        # Should show delete confirmation and success
+        assert_match(/Delete Directory/, clean)
+        assert_match(/Deleted: #{Regexp.escape(name)}/, clean)
+        
+        # Directory should be deleted
+        refute(File.exist?(path), 'directory should be deleted')
+        
+        # We should not get getcwd errors - the process should have changed directory
+        refute_match(/getcwd/, stderr, 'should not have getcwd errors')
+        refute_match(/error retrieving current directory/, stderr, 'should not have directory retrieval errors')
+      ensure
+        # Try to change back, but if the directory was deleted, change to original
+        begin
+          Dir.chdir(original_dir)
+        rescue
+          Dir.chdir(Dir.home)
+        end
+      end
     end
   end
 end

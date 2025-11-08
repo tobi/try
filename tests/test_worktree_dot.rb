@@ -6,7 +6,9 @@ require 'fileutils'
 class TestWorktreeDot < Test::Unit::TestCase
   def run_cmd(cwd, *args)
     cmd = [RbConfig.ruby, File.expand_path('../try.rb', __dir__), *args]
-    Open3.capture3(*cmd, chdir: cwd)
+    stdout, stderr, status = Open3.capture3(*cmd, chdir: cwd)
+    # Force encoding to UTF-8 to handle ANSI escape sequences
+    [stdout.force_encoding('UTF-8'), stderr.force_encoding('UTF-8'), status]
   end
 
   def test_try_dot_emits_worktree_step_and_uses_cwd_name
