@@ -246,6 +246,13 @@ A: First, welcome to the club. Second, it handles it fine - the scoring algorith
 
 It's one file. If you want to change something, just edit it. Send a PR if you think others would like it too.
 
+### Design Contributions
+
+Community members have proposed logo concepts for `try`! Check out the designs and provide feedback:
+
+- 📐 [Logo Concepts](LOGO_CONCEPTS.md) - Proposed designs and rationale
+- 🎨 [Assets Guidelines](assets/README.md) - How to contribute design work
+
 ## License
 
 MIT - Do whatever you want with it.
