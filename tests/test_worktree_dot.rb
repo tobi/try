@@ -5,7 +5,7 @@ require 'fileutils'
 
 class TestWorktreeDot < Test::Unit::TestCase
   def run_cmd(cwd, *args)
-    cmd = [RbConfig.ruby, File.expand_path('../try.rb', __dir__), *args]
+    cmd = [RbConfig.ruby, File.expand_path('../tryout.rb', __dir__), *args]
     Open3.capture3(*cmd, chdir: cwd)
   end
 

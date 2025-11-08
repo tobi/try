@@ -1,14 +1,14 @@
-# Makefile for try - Fresh directories for every vibe
+# Makefile for tryout - Fresh directories for every vibe
 
 SHELL := /bin/bash
 RUBY := ruby
-SCRIPT := try.rb
+SCRIPT := tryout.rb
 TEST_DIR := tests
 
 # Default target
 .PHONY: help
 help: ## Show this help message
-	@echo "try - Fresh directories for every vibe"
+	@echo "tryout - Fresh directories for every vibe"
 	@echo ""
 	@echo "Available targets:"
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-15s\033[0m %s\n", $$1, $$2}'
@@ -33,7 +33,7 @@ lint: ## Check Ruby syntax
 	done
 
 .PHONY: install
-install: ## Install try.rb to ~/.local/
+install: ## Install tryout.rb to ~/.local/
 	@echo "Installing $(SCRIPT) to ~/.local/..."
 	@mkdir -p ~/.local
 	@cp $(SCRIPT) ~/.local/
@@ -42,16 +42,16 @@ install: ## Install try.rb to ~/.local/
 	@echo "  eval \"\$$(~/.local/$(SCRIPT) init ~/src/tries)\""
 
 .PHONY: install-global
-install-global: ## Install try.rb to /usr/local/bin/
+install-global: ## Install tryout.rb to /usr/local/bin/
 	@echo "Installing $(SCRIPT) to /usr/local/bin/..."
-	@sudo cp $(SCRIPT) /usr/local/bin/try
-	@sudo chmod +x /usr/local/bin/try
+	@sudo cp $(SCRIPT) /usr/local/bin/tryout
+	@sudo chmod +x /usr/local/bin/tryout
 	@echo "Installed globally! Add to your shell:"
-	@echo "  eval \"\$$(try init ~/src/tries)\""
+	@echo "  eval \"\$$(tryout init ~/src/tries)\""
 
 .PHONY: demo
 demo: ## Show example commands
-	@echo "try - Example commands:"
+	@echo "tryout - Example commands:"
 	@echo ""
 	@echo "Basic usage:"
 	@echo "  ./$(SCRIPT) --help                                # Show help"
@@ -72,7 +72,7 @@ demo: ## Show example commands
 
 .PHONY: version
 version: ## Show version information  
-	@echo "try.rb - Fresh directories for every vibe"
+	@echo "tryout.rb - Fresh directories for every vibe"
 	@echo "Ruby version: $$($(RUBY) --version)"
 	@echo "Script: $(SCRIPT)"
 

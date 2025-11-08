@@ -119,7 +119,7 @@ module UI
 end
 
 class TrySelector
-  TRY_PATH = ENV['TRY_PATH'] || File.expand_path("~/src/tries")
+  TRY_PATH = ENV['TRYOUT_PATH'] || File.expand_path("~/src/tries")
 
   def initialize(search_term = "", base_path: TRY_PATH, initial_input: nil, test_render_once: false, test_no_cls: false, test_keys: nil, test_confirm: nil)
     @search_term = search_term.gsub(/\s+/, '-')
@@ -183,7 +183,7 @@ class TrySelector
   end
 
   def load_all_tries
-    # Load trials only once - single pass through directory
+    # Load experiments only once - single pass through directory
     @all_tries ||= begin
       tries = []
       Dir.foreach(@base_path) do |entry|
@@ -357,7 +357,7 @@ class TrySelector
     separator = "─" * (term_width - 1)
 
     # Header
-    UI.puts "{h1}📁 Try Directory Selection"
+    UI.puts "{h1}📁 Tryout Directory Selection"
     UI.puts "{dim_text}#{separator}"
 
     # Search input
@@ -589,12 +589,12 @@ class TrySelector
   end
 
   def handle_selection(try_dir)
-    # Select existing try directory
+    # Select existing experiment directory
     @selected = { type: :cd, path: try_dir[:path] }
   end
 
   def handle_create_new
-    # Create new try directory
+    # Create new tryout directory
     date_prefix = Time.now.strftime("%Y-%m-%d")
 
     # If user already typed a name, use it directly
@@ -607,7 +607,7 @@ class TrySelector
       suggested_name = ""
 
       UI.cls  # Clear screen using UI system
-      UI.puts "{h2}Enter new try name"
+      UI.puts "{h2}Enter new experiment name"
       UI.puts
       UI.puts "> {dim_text}#{date_prefix}-{reset}"
       UI.flush
@@ -682,7 +682,7 @@ if __FILE__ == $0
 
   def print_global_help
     text = <<~HELP
-      {h1}try something!{reset}
+      {h1}tryout something!{reset}
 
       Lightweight experiments for people with ADHD
 
@@ -705,21 +705,21 @@ if __FILE__ == $0
 
       {h2}Clone Examples:{text}
 
-        try clone https://github.com/tobi/try.git
+        tryout clone https://github.com/tobi/try.git
         # Creates: 2025-08-27-tobi-try
 
-        try clone https://github.com/tobi/try.git my-fork
+        tryout clone https://github.com/tobi/try.git my-fork
         # Creates: my-fork
 
-        try https://github.com/tobi/try.git
+        tryout https://github.com/tobi/try.git
         # Shorthand for clone (same as first example)
 
       {h2}Worktree Examples:{text}
 
-        try worktree dir
+        tryout worktree dir
         # From current git repo, creates: 2025-08-27-repo-name and adds detached worktree
 
-        try worktree ~/src/github.com/tobi/try my-branch
+        tryout worktree ~/src/github.com/tobi/try my-branch
         # From given repo path, creates: 2025-08-27-my-branch and adds detached worktree
 
       {h2}Defaults:{reset}
@@ -841,7 +841,7 @@ if __FILE__ == $0
 
     unless git_uri
       warn "Error: git URI required for clone command"
-      warn "Usage: try clone <git-uri> [name]"
+      warn "Usage: tryout clone <git-uri> [name]"
       exit 1
     end
 
@@ -871,7 +871,7 @@ if __FILE__ == $0
 
     path_arg = tries_path ? " --path \"#{tries_path}\"" : ""
     bash_or_zsh_script = <<~SHELL
-      try() {
+      tryout() {
         script_path='#{script_path}'
         # Check if first argument is a known command
         case "$1" in
@@ -895,7 +895,7 @@ if __FILE__ == $0
     SHELL
 
     fish_script = <<~SHELL
-      function try
+      function tryout
         set -l script_path "#{script_path}"
         # Check if first argument is a known command
         switch $argv[1]
@@ -926,7 +926,7 @@ if __FILE__ == $0
       return cmd_clone!(args[1..-1] || [], tries_path)
     end
 
-    # Support: try . [name] and try ./path [name]
+    # Support: tryout . [name] and tryout ./path [name]
     if args.first && args.first.start_with?('.')
       path_arg = args.shift
       custom = args.join(' ')
