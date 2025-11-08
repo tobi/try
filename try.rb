@@ -702,6 +702,9 @@ if __FILE__ == $0
         clone <git-uri> [name]  # Clone git repo into date-prefixed directory
         worktree dir [name]  # Create date-prefixed dir; add worktree from CWD if git repo
         worktree <repo-path> [name]  # Same as above, but source repo is <repo-path>
+        worktree merge  # Merge worktree changes back to parent repository
+        worktree drop  # Remove worktree and delete its branch
+        sandbox [subcommand]  # Run Docker sandbox from .toolkami/docker-compose.yml
 
       {h2}Clone Examples:{text}
 
@@ -721,6 +724,29 @@ if __FILE__ == $0
 
         try worktree ~/src/github.com/tobi/try my-branch
         # From given repo path, creates: 2025-08-27-my-branch and adds detached worktree
+
+        try worktree merge
+        # Squash-merge changes from current worktree back to parent repository
+
+        try worktree drop
+        # Remove current worktree and delete its branch
+
+      {h2}Sandbox Examples:{text}
+
+        try sandbox
+        # Run Docker container from .toolkami/docker-compose.yml
+
+        try sandbox build
+        # Build the Docker image
+
+        try sandbox build --no-cache
+        # Build with no cache
+
+        try sandbox exec
+        # Execute interactive bash in running container
+
+        try sandbox exec npm test
+        # Execute command in running container
 
       {h2}Defaults:{reset}
         Default path: {dim_text}~/src/tries{reset} (override with --path on commands)
@@ -875,7 +901,7 @@ if __FILE__ == $0
         script_path='#{script_path}'
         # Check if first argument is a known command
         case "$1" in
-          clone|worktree|init)
+          clone|worktree|init|sandbox)
             cmd=$(/usr/bin/env ruby "$script_path"#{path_arg} "$@" 2>/dev/tty)
             ;;
           *)
@@ -899,7 +925,7 @@ if __FILE__ == $0
         set -l script_path "#{script_path}"
         # Check if first argument is a known command
         switch $argv[1]
-          case clone worktree init
+          case clone worktree init sandbox
             set -l cmd (/usr/bin/env ruby "$script_path"#{path_arg} $argv 2>/dev/tty | string collect)
           case '*'
             set -l cmd (/usr/bin/env ruby "$script_path" cd#{path_arg} $argv 2>/dev/tty | string collect)
@@ -1083,6 +1109,204 @@ if __FILE__ == $0
     ENV['SHELL']&.include?('fish')
   end
 
+  # Check if Docker is available
+  def ensure_docker_available!
+    unless system('command -v docker >/dev/null 2>&1')
+      warn "Error: Docker is not installed or not in PATH"
+      warn "Please install Docker to use sandbox features"
+      exit 1
+    end
+  end
+
+  # Parse docker-compose.yml to extract service name
+  def determine_service_name(compose_path)
+    # Simple YAML parsing without gems - look for first service under 'services:'
+    content = File.read(compose_path)
+    in_services = false
+    
+    content.each_line do |line|
+      # Check if we're in the services section
+      if line =~ /^services:\s*$/
+        in_services = true
+        next
+      end
+      
+      # If we're in services, look for first service name (indented, not a comment)
+      if in_services && line =~ /^  ([a-zA-Z0-9_-]+):\s*$/
+        service_name = $1
+        # Sanitize service name
+        return service_name.gsub(/[^a-zA-Z0-9_.-]/, '_')
+      end
+    end
+    
+    # Fallback: use sanitized directory name
+    File.basename(Dir.pwd).gsub(/[^a-zA-Z0-9_.-]/, '_').downcase
+  end
+
+  # Merge worktree changes back to parent repository
+  def cmd_worktree_merge!
+    # Verify we're in a git repository
+    git_common_dir = `git rev-parse --git-common-dir 2>/dev/null`.strip
+    if $?.exitstatus != 0
+      warn "Error: Not in a git repository"
+      exit 1
+    end
+
+    # Verify we're in a worktree (not main repo)
+    git_dir = `git rev-parse --git-dir 2>/dev/null`.strip
+    if git_common_dir == git_dir || git_common_dir == '.git'
+      warn "Error: Not in a worktree (you're in the main repository)"
+      warn "Use this command from within a worktree directory"
+      exit 1
+    end
+
+    # Check for uncommitted changes
+    status_output = `git status --porcelain 2>/dev/null`.strip
+    unless status_output.empty?
+      warn "Error: You have uncommitted changes. Please commit or stash them first."
+      warn status_output
+      exit 1
+    end
+
+    # Get current commit SHA and branch name
+    commit_sha = `git rev-parse HEAD 2>/dev/null`.strip
+    branch_name = `git rev-parse --abbrev-ref HEAD 2>/dev/null`.strip
+
+    # Determine parent repo location
+    parent_repo = File.dirname(git_common_dir)
+    worktree_path = Dir.pwd
+
+    # Quote paths for shell safety
+    parent_repo_q = "'" + parent_repo.gsub("'", %q('\"'\"')) + "'"
+    worktree_path_q = "'" + worktree_path.gsub("'", %q('\"'\"')) + "'"
+
+    parts = []
+    
+    # Navigate to parent repo and merge
+    if branch_name != 'HEAD'
+      # Named branch - use squash merge
+      branch_q = "'" + branch_name.gsub("'", %q('\"'\"')) + "'"
+      parts << "cd #{parent_repo_q}"
+      parts << "git merge --squash #{branch_q}"
+      parts << "git commit -m 'squash: merge #{branch_name}'"
+      parts << "cd #{worktree_path_q}"
+      parts << "echo 'Merged worktree changes from #{branch_name} into parent repository'"
+    else
+      # Detached HEAD - use cherry-pick
+      parts << "cd #{parent_repo_q}"
+      parts << "git cherry-pick #{commit_sha}"
+      parts << "cd #{worktree_path_q}"
+      parts << "echo 'Cherry-picked commit #{commit_sha[0..7]} into parent repository'"
+    end
+
+    emit_script(parts)
+  end
+
+  # Drop (remove) worktree and delete its branch
+  def cmd_worktree_drop!
+    # Verify we're in a git repository
+    git_common_dir = `git rev-parse --git-common-dir 2>/dev/null`.strip
+    if $?.exitstatus != 0
+      warn "Error: Not in a git repository"
+      exit 1
+    end
+
+    # Verify we're in a worktree (not main repo)
+    git_dir = `git rev-parse --git-dir 2>/dev/null`.strip
+    if git_common_dir == git_dir || git_common_dir == '.git'
+      warn "Error: Not in a worktree (you're in the main repository)"
+      warn "Use this command from within a worktree directory"
+      exit 1
+    end
+
+    # Get paths and branch info
+    parent_repo = File.dirname(git_common_dir)
+    worktree_path = Dir.pwd
+    branch_name = `git rev-parse --abbrev-ref HEAD 2>/dev/null`.strip
+
+    # Quote paths for shell safety
+    parent_repo_q = "'" + parent_repo.gsub("'", %q('\"'\"')) + "'"
+    worktree_path_q = "'" + worktree_path.gsub("'", %q('\"'\"')) + "'"
+
+    parts = []
+    parts << "cd #{parent_repo_q}"
+    parts << "git worktree remove --force #{worktree_path_q}"
+    
+    # Delete branch if it's a named branch (not detached HEAD)
+    if branch_name != 'HEAD'
+      branch_q = "'" + branch_name.gsub("'", %q('\"'\"')) + "'"
+      parts << "git branch -D #{branch_q}"
+      parts << "echo 'Removed worktree and deleted branch #{branch_name}'"
+    else
+      parts << "echo 'Removed worktree (detached HEAD)'"
+    end
+
+    emit_script(parts)
+  end
+
+  # Run Docker sandbox from .toolkami/docker-compose.yml
+  def cmd_sandbox!(args)
+    # Check for docker-compose.yml in .toolkami directory
+    compose_path = File.join(Dir.pwd, '.toolkami', 'docker-compose.yml')
+    unless File.exist?(compose_path)
+      warn "Error: No .toolkami/docker-compose.yml found in current directory"
+      warn "Please create a docker-compose.yml file in .toolkami/ directory"
+      exit 1
+    end
+
+    # Ensure Docker is available
+    ensure_docker_available!
+
+    # Determine service name from compose file
+    service_name = determine_service_name(compose_path)
+
+    # Quote current directory for shell safety
+    quoted_pwd = "'" + Dir.pwd.gsub("'", %q('\"'\"')) + "'"
+
+    # Handle subcommands
+    subcommand = args.shift
+
+    parts = []
+    parts << "cd #{quoted_pwd}"
+
+    case subcommand
+    when 'build'
+      # Build the service image
+      # Pass through any additional flags (e.g., --no-cache)
+      extra_flags = args.join(' ')
+      if extra_flags.empty?
+        parts << "docker compose -f .toolkami/docker-compose.yml build #{service_name}"
+      else
+        parts << "docker compose -f .toolkami/docker-compose.yml build #{extra_flags} #{service_name}"
+      end
+    when 'exec'
+      # Execute command in running container
+      if args.empty?
+        # Default to interactive bash
+        parts << "docker compose -f .toolkami/docker-compose.yml exec -it #{service_name} bash"
+      else
+        # Execute provided command
+        cmd = args.join(' ')
+        parts << "docker compose -f .toolkami/docker-compose.yml exec -it #{service_name} #{cmd}"
+      end
+    else
+      # Default: run the container
+      # If subcommand was provided but not recognized, treat it as part of run command
+      if subcommand
+        args.unshift(subcommand)
+      end
+      
+      if args.empty?
+        parts << "docker compose -f .toolkami/docker-compose.yml run --rm #{service_name}"
+      else
+        cmd = args.join(' ')
+        parts << "docker compose -f .toolkami/docker-compose.yml run --rm #{service_name} #{cmd}"
+      end
+    end
+
+    emit_script(parts)
+  end
+
 
   case command
   when nil
@@ -1098,6 +1322,14 @@ if __FILE__ == $0
   when 'worktree'
     sub = ARGV.shift
     case sub
+    when 'merge'
+      # try worktree merge - merge worktree changes back to parent
+      cmd_worktree_merge!
+      exit 0
+    when 'drop'
+      # try worktree drop - remove worktree and delete branch
+      cmd_worktree_drop!
+      exit 0
     when nil, 'dir'
       # try worktree dir [name]  (or no subcommand -> current directory)
       custom = ARGV.join(' ')
@@ -1153,6 +1385,10 @@ if __FILE__ == $0
       emit_tasks_script(tasks)
       exit 0
     end
+  when 'sandbox'
+    # try sandbox [subcommand] - run Docker sandbox
+    cmd_sandbox!(ARGV)
+    exit 0
   when 'cd'
     tasks = cmd_cd!(ARGV, tries_path, and_type, and_exit, and_keys, and_confirm)
     emit_tasks_script(tasks) if tasks

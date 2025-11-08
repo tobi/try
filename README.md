@@ -16,6 +16,8 @@ Instantly navigate through all your experiment directories with:
 - **Fuzzy search** that just works
 - **Smart sorting** - recently used stuff bubbles to the top
 - **Auto-dating** - creates directories like `2025-08-17-redis-experiment`
+- **Git worktree support** - parallel development workflows
+- **Docker sandbox** - isolated, safe experimentation
 - **Zero config** - just one Ruby file, no dependencies
 
 ## Quick Start
@@ -107,8 +109,13 @@ try new api                                  # Start with "2025-08-17-new-api"
 try . [name]                                   # Create a dated worktree dir for current repo
 try ./path/to/repo [name]                      # Use another repo as the worktree source
 try worktree dir [name]                        # Same as above, explicit CLI form
+try worktree merge                             # Merge worktree changes back to parent repo
+try worktree drop                              # Remove worktree and delete its branch
 try clone https://github.com/user/repo.git  # Clone repo into date-prefixed directory
 try https://github.com/user/repo.git        # Shorthand for clone (same as above)
+try sandbox                                    # Run Docker sandbox from .toolkami/docker-compose.yml
+try sandbox build                              # Build Docker image
+try sandbox exec [cmd]                         # Execute command in sandbox container
 try --help                                   # See all options
 ```
 
@@ -142,6 +149,75 @@ Supported git URI formats:
 - `git@host.com:user/repo.git` (SSH other hosts)
 
 The `.git` suffix is automatically removed from URLs when generating directory names.
+
+### Worktree Management
+
+**try** provides commands to manage git worktrees for parallel development workflows:
+
+```bash
+# Create a worktree from current repo
+try worktree dir my-feature
+# Creates: 2025-08-27-my-feature with detached worktree
+
+# Merge worktree changes back to parent repo
+try worktree merge
+# Squash-merges changes from current worktree into parent repository
+
+# Remove worktree and delete its branch
+try worktree drop
+# Removes worktree directory and deletes associated branch
+```
+
+**Worktree workflow:**
+1. Create a worktree for your experiment: `try worktree dir feature-x`
+2. Make changes and commit them in the worktree
+3. When done, merge back: `try worktree merge`
+4. Clean up: `try worktree drop`
+
+This is perfect for:
+- Testing multiple approaches simultaneously
+- Running parallel agent workflows
+- Isolating experimental changes
+
+### Docker Sandbox
+
+**try** can run Docker-based development environments for safe, isolated experimentation:
+
+```bash
+# Run Docker container from .toolkami/docker-compose.yml
+try sandbox
+
+# Build the Docker image
+try sandbox build
+
+# Build with no cache
+try sandbox build --no-cache
+
+# Execute interactive bash in running container
+try sandbox exec
+
+# Execute command in running container
+try sandbox exec npm test
+```
+
+**Setup:**
+1. Create `.toolkami/docker-compose.yml` in your project:
+   ```yaml
+   services:
+     app:
+       image: ruby:3.0
+       volumes:
+         - .:/workspace
+       working_dir: /workspace
+   ```
+
+2. Use sandbox commands to run isolated environments
+
+This is perfect for:
+- Running untrusted code safely
+- Testing in clean environments
+- Multiple concurrent agent workflows
+- Avoiding dependency conflicts
 
 ### Keyboard Shortcuts
 
