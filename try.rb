@@ -662,6 +662,26 @@ class TrySelector
 
     if confirmation == "YES"
       begin
+        # Check if current directory is within the directory being deleted
+        current_dir = Dir.pwd
+        target_path = File.realpath(try_dir[:path]) rescue try_dir[:path]
+        current_real = File.realpath(current_dir) rescue current_dir
+        
+        # If we're in the directory being deleted, change to parent tries directory first
+        if current_real.start_with?(target_path)
+          begin
+            Dir.chdir(@base_path)
+          rescue => e
+            # If we can't change to base_path, try to change to parent of target
+            begin
+              Dir.chdir(File.dirname(target_path))
+            rescue
+              # Last resort: change to home directory
+              Dir.chdir(Dir.home)
+            end
+          end
+        end
+        
         FileUtils.rm_rf(try_dir[:path])
         @delete_status = "Deleted: #{try_dir[:basename]}"
         @all_tries = nil  # Clear cache to reload tries

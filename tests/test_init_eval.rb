@@ -5,7 +5,9 @@ require 'tmpdir'
 class TestInitEval < Test::Unit::TestCase
   def run_cmd(env = {}, *args)
     cmd = [RbConfig.ruby, File.expand_path('../try.rb', __dir__), *args]
-    Open3.capture3(env, *cmd)
+    stdout, stderr, status = Open3.capture3(env, *cmd)
+    # Force encoding to UTF-8 to handle ANSI escape sequences
+    [stdout.force_encoding('UTF-8'), stderr.force_encoding('UTF-8'), status]
   end
 
   def test_init_emits_bash_function_with_path
