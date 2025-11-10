@@ -662,6 +662,10 @@ class TrySelector
 
     if confirmation == "YES"
       begin
+        # If the directory we're deleting is the current directory, change to parent first
+        if Dir.pwd == try_dir[:path]
+          Dir.chdir(@base_path)
+        end
         FileUtils.rm_rf(try_dir[:path])
         @delete_status = "Deleted: #{try_dir[:basename]}"
         @all_tries = nil  # Clear cache to reload tries
