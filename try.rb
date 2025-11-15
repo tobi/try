@@ -906,7 +906,7 @@ if __FILE__ == $0
         end
         set -l rc $status
         if test $rc -eq 0
-          if string match -r ' && ' -- $cmd
+          if string match -rq ' && ' -- $cmd
             eval $cmd
           else
             printf %s $cmd

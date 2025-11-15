@@ -29,7 +29,7 @@ class TestInitEval < Test::Unit::TestCase
       assert_match(/^function try/m, stdout)
       assert_match(/cd --path \"#{Regexp.escape(File.expand_path(dir))}\"/, stdout)
       assert_match(/string collect\)/, stdout)
-      assert_match(/string match -r ' \&\& ' -- \$cmd/, stdout)
+      assert_match(/string match -rq ' \&\& ' -- \$cmd/, stdout)
     end
   end
 end
