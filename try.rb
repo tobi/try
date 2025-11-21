@@ -22,6 +22,9 @@ module UI
   @@last_buffer = []
   @@current_line = ""
 
+  @@height = nil
+  @@width = nil
+
   def self.print(text, io: STDERR)
     return if text.nil?
     @@current_line += text
@@ -100,13 +103,22 @@ module UI
   end
 
   def self.height
-    h = `tput lines 2>/dev/null`.strip.to_i
-    h > 0 ? h : 24
+    @@height ||= begin
+      h = `tput lines 2>/dev/null`.strip.to_i
+      h > 0 ? h : 24
+    end
   end
 
   def self.width
-    w = `tput cols 2>/dev/null`.strip.to_i
-    w > 0 ? w : 80
+    @@width ||= begin
+      w = `tput cols 2>/dev/null`.strip.to_i
+      w > 0 ? w : 80
+    end
+  end
+
+  def self.refresh_size
+    @@height = nil
+    @@width = nil
   end
 
   # Expand tokens in a string to ANSI sequences
@@ -134,6 +146,7 @@ class TrySelector
     @test_no_cls = test_no_cls
     @test_keys = test_keys
     @test_confirm = test_confirm
+    @old_winch_handler = nil  # Store original SIGWINCH handler
 
     FileUtils.mkdir_p(@base_path) unless Dir.exist?(@base_path)
   end
@@ -173,6 +186,11 @@ class TrySelector
       UI.cls
       STDERR.print("\e[2J\e[H\e[?25l")  # Direct clear screen, home, hide cursor
     end
+
+    # Handle terminal resize
+    @old_winch_handler = Signal.trap('WINCH') do
+      UI.refresh_size
+    end
   end
 
   def restore_terminal
@@ -180,6 +198,9 @@ class TrySelector
     unless @test_no_cls
       STDERR.print("\e[2J\e[H\e[?25h")  # Direct clear, home, show cursor
     end
+
+    # Restore original SIGWINCH handler
+    Signal.trap('WINCH', @old_winch_handler) if @old_winch_handler
   end
 
   def load_all_tries
@@ -198,6 +219,7 @@ class TrySelector
         tries << {
           name: "📁 #{entry}",
           basename: entry,
+          basename_down: entry.downcase, 
           path: path,
           is_new: false,
           ctime: stat.ctime,
@@ -211,9 +233,13 @@ class TrySelector
   def get_tries
     load_all_tries
 
+    query_down = @input_buffer.downcase
+    query_chars = query_down.chars
+
     # Always score trials (for time-based sorting even without search)
     scored_tries = @all_tries.map do |try_dir|
-      score = calculate_score(try_dir[:basename], @input_buffer, try_dir[:ctime], try_dir[:mtime])
+      # Pass the whole object and the pre-calculated query parts
+      score = calculate_score(try_dir, query_down, query_chars, try_dir[:ctime], try_dir[:mtime])
       try_dir.merge(score: score)
     end
 
@@ -227,7 +253,10 @@ class TrySelector
     end
   end
 
-  def calculate_score(text, query, ctime = nil, mtime = nil)
+  def calculate_score(try_dir, query_down, query_chars, ctime = nil, mtime = nil)
+    text = try_dir[:basename]
+    text_lower = try_dir[:basename_down] # Use pre-calculated value
+    
     score = 0.0
 
     # generally we are looking for default date-prefixed directories
@@ -236,37 +265,44 @@ class TrySelector
     end
 
     # If there's a search query, calculate match score
-    if !query.empty?
-      text_lower = text.downcase
-      query_lower = query.downcase
-      query_chars = query_lower.chars
-
+    if !query_down.empty?
+      query_len = query_chars.length
+      text_len = text_lower.length
+      
       last_pos = -1
       query_idx = 0
+      
+      i = 0
+      while i < text_len
+        break if query_idx >= query_len
+        
+        char = text_lower[i] # Access string by index
+        
+        if char == query_chars[query_idx]
+          # Base point + word boundary bonus
+          score += 1.0
+          
+          # Check previous char for boundary
+          is_boundary = (i == 0) || (text_lower[i-1].match?(/\W/))
+          score += 1.0 if is_boundary
 
-      text_lower.chars.each_with_index do |char, pos|
-        break if query_idx >= query_chars.length
-        next unless char == query_chars[query_idx]
+          # Proximity bonus: 1/sqrt(distance) gives nice decay
+          if last_pos >= 0
+            gap = i - last_pos - 1
+            score += 1.0 / Math.sqrt(gap + 1)
+          end
 
-        # Base point + word boundary bonus
-        score += 1.0
-        score += 1.0 if pos == 0 || text_lower[pos-1] =~ /\W/
-
-        # Proximity bonus: 1/sqrt(distance) gives nice decay
-        if last_pos >= 0
-          gap = pos - last_pos - 1
-          score += 1.0 / Math.sqrt(gap + 1)
+          last_pos = i
+          query_idx += 1
         end
-
-        last_pos = pos
-        query_idx += 1
+        i += 1
       end
 
       # Return 0 if not all query chars matched
-      return 0.0 if query_idx < query_chars.length
+      return 0.0 if query_idx < query_len
 
       # Prefer shorter matches (density bonus)
-      score *= (query_chars.length.to_f / (last_pos + 1)) if last_pos >= 0
+      score *= (query_len.to_f / (last_pos + 1)) if last_pos >= 0
 
       # Length penalty - shorter text scores higher for same match
       # e.g., "v" matches better in "2025-08-13-v" than "2025-08-13-vbo-viz"
