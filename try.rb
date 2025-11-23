@@ -926,7 +926,7 @@ if __FILE__ == $0
         rc=$?
         if [ $rc -eq 0 ]; then
           case "$cmd" in
-            *" && "*) eval "$cmd" ;;
+            *"&&"*) eval "$cmd" ;;
             *) printf %s "$cmd" ;;
           esac
         else
@@ -947,7 +947,7 @@ if __FILE__ == $0
         end
         set -l rc $status
         if test $rc -eq 0
-          if string match -r ' && ' -- $cmd
+          if string match -r '&&' -- $cmd
             eval $cmd
           else
             printf %s $cmd
