@@ -208,7 +208,8 @@ class TrySelector
     @all_tries ||= begin
       tries = []
       Dir.foreach(@base_path) do |entry|
-        next if entry == '.' || entry == '..'
+        # exclude . and .. but also .git, and any other hidden dirs.
+        next if entry.start_with?('.')
 
         path = File.join(@base_path, entry)
         stat = File.stat(path)
