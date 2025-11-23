@@ -900,9 +900,9 @@ if __FILE__ == $0
         # Check if first argument is a known command
         switch $argv[1]
           case clone worktree init
-            set -l cmd (/usr/bin/env ruby "$script_path"#{path_arg} $argv 2>/dev/tty | string collect)
+            set -f cmd (/usr/bin/env ruby "$script_path"#{path_arg} $argv 2>/dev/tty | string collect)
           case '*'
-            set -l cmd (/usr/bin/env ruby "$script_path" cd#{path_arg} $argv 2>/dev/tty | string collect)
+            set -f cmd (/usr/bin/env ruby "$script_path" cd#{path_arg} $argv 2>/dev/tty | string collect)
         end
         set -l rc $status
         if test $rc -eq 0
