@@ -77,8 +77,8 @@
             cp -r lib $out/bin/
             chmod +x $out/bin/try
 
-            wrapProgram $out/bin/try \
-              --prefix PATH : ${ruby}/bin
+            substituteInPlace $out/bin/try \
+              --replace '#!/usr/bin/env ruby' '#!${ruby}/bin/ruby'
           '';
 
           meta = with pkgs.lib; {
