@@ -69,15 +69,16 @@
           version = "0.1.0";
 
           src = inputs.self;
-          nativeBuildInputs = [ pkgs.makeBinaryWrapper ];
+
+          postPatch = ''
+            substituteInPlace try.rb \
+              --replace-fail '#!/usr/bin/env ruby' '#!${ruby}/bin/ruby'
+          '';
 
           installPhase = ''
             mkdir -p $out/bin
             cp try.rb $out/bin/try
             chmod +x $out/bin/try
-
-            wrapProgram $out/bin/try \
-              --prefix PATH : ${ruby}/bin
           '';
 
           meta = with pkgs.lib; {

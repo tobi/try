@@ -917,10 +917,10 @@ if __FILE__ == $0
         # Check if first argument is a known command
         case "$1" in
           clone|worktree|init)
-            cmd=$(/usr/bin/env ruby "$script_path"#{path_arg} "$@" 2>/dev/tty)
+            cmd=$("$script_path"#{path_arg} "$@" 2>/dev/tty)
             ;;
           *)
-            cmd=$(/usr/bin/env ruby "$script_path" cd#{path_arg} "$@" 2>/dev/tty)
+            cmd=$("$script_path" cd#{path_arg} "$@" 2>/dev/tty)
             ;;
         esac
         rc=$?
@@ -941,9 +941,9 @@ if __FILE__ == $0
         # Check if first argument is a known command
         switch $argv[1]
           case clone worktree init
-            set -f cmd (/usr/bin/env ruby "$script_path"#{path_arg} $argv 2>/dev/tty | string collect)
+            set -f cmd ("$script_path"#{path_arg} $argv 2>/dev/tty | string collect)
           case '*'
-            set -f cmd (/usr/bin/env ruby "$script_path" cd#{path_arg} $argv 2>/dev/tty | string collect)
+            set -f cmd ("$script_path" cd#{path_arg} $argv 2>/dev/tty | string collect)
         end
         set -l rc $status
         if test $rc -eq 0
