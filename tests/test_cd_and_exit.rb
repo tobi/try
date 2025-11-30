@@ -21,15 +21,15 @@ class TestCdAndExit < Test::Unit::TestCase
       clean = combined.gsub(/\e\[[0-9;?]*[ -\/]*[@-~]/, '')
 
       # Should contain the TUI header and the typed query
-      assert_match(/Try Directory Selection/, clean)
-      assert_match(/Search: pool/, clean)
+      assert_match(/Try Selector/, clean)
+      assert_match(/Search:.*pool/, clean)
 
       # Should list directories
       assert_match(/redis-connection-pool/, clean)
       assert_match(/thread-pool/, clean)
 
-      # Should show create new line when input present
-      assert_match(/Create new: pool/, clean)
+      # Should show [new] line when input present
+      assert_match(/\[new\] pool/, clean)
     end
   end
 end

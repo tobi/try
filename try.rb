@@ -7,15 +7,25 @@ require 'fileutils'
 # Lightweight token-based printer for all UI output with double buffering
 module UI
   TOKEN_MAP = {
-    '{text}' => "\e[39m",
-    '{dim_text}' => "\e[90m",
-    '{h1}' => "\e[1;33m",
-    '{h2}' => "\e[1;36m",
-    '{highlight}' => "\e[1;33m",
-    '{reset}' => "\e[0m\e[39m\e[49m", '{reset_bg}' => "\e[49m", '{reset_fg}' => "\e[39m",
+    # Text formatting
+    '{b}' => "\e[1;33m",           # Bold + Yellow (highlighted text, fuzzy match chars)
+    '{/b}' => "\e[22m\e[39m",      # Reset bold + foreground
+    '{dim}' => "\e[90m",           # Gray (bright black) - secondary/de-emphasized text
+    '{text}' => "\e[0m\e[39m",     # Full reset - normal text
+    '{reset}' => "\e[0m\e[39m\e[49m",  # Complete reset of all formatting
+    '{/fg}' => "\e[39m",           # Reset foreground color only
+    # Headings
+    '{h1}' => "\e[1;38;5;208m",    # Bold + Orange (primary headings)
+    '{h2}' => "\e[1;34m",          # Bold + Blue (secondary headings)
+    # Selection
+    '{section}' => "\e[1m",        # Bold - start of selected/highlighted section
+    '{/section}' => "\e[0m",       # Full reset - end of selected section
+    # Strikethrough (for deleted items)
+    '{strike}' => "\e[48;5;52m",   # Dark red background
+    '{/strike}' => "\e[49m",       # Reset background
+    # Screen control
     '{clear_screen}' => "\e[2J", '{clear_line}' => "\e[2K", '{home}' => "\e[H", '{clear_below}' => "\e[0J",
     '{hide_cursor}' => "\e[?25l", '{show_cursor}' => "\e[?25h",
-    '{start_selected}' => "\e[1m", '{end_selected}' => "\e[0m", '{bold}' => "\e[1m"
   }.freeze
 
   @@buffer = []
@@ -24,6 +34,8 @@ module UI
 
   @@height = nil
   @@width = nil
+  @@expand_tokens = true
+  @@force_colors = false  # Force color output even when not TTY (for testing)
 
   def self.print(text, io: STDERR)
     return if text.nil?
@@ -37,14 +49,14 @@ module UI
   end
 
   def self.flush(io: STDERR)
-    # Always fine into the buffer
+    # Always finalize the current line into the buffer
     unless @@current_line.empty?
       @@buffer << @@current_line
       @@current_line = ""
     end
 
-    # In non-TTY contexts, print plain text without control codes or tokens
-    unless io.tty?
+    # In non-TTY contexts (unless force_colors), print plain text without control codes
+    unless io.tty? || @@force_colors
       plain = @@buffer.join("\n").gsub(/\{.*?\}/, '')
       io.print(plain)
       io.print("\n") unless plain.end_with?("\n")
@@ -55,8 +67,11 @@ module UI
       return
     end
 
-    # Position cursor at home for TTY
-    io.print("\e[H")
+    # TTY or force_colors mode: output with formatting
+    if io.tty?
+      # Position cursor at home for TTY
+      io.print("\e[H")
+    end
 
     max_lines = [@@buffer.length, @@last_buffer.length].max
     reset = TOKEN_MAP['{reset}']
@@ -65,13 +80,16 @@ module UI
       current_line = @@buffer[i] || ""
       last_line = @@last_buffer[i] || ""
 
-      if current_line != last_line
-        # Move to line and clear it, then write new content
-        io.print("\e[#{i + 1};1H\e[2K")
+      if current_line != last_line || @@force_colors
+        # Move to line and clear it (only for TTY)
+        if io.tty?
+          io.print("\e[#{i + 1};1H\e[2K")
+        end
         if !current_line.empty?
           processed_line = expand_tokens(current_line)
           io.print(processed_line)
-          io.print(reset)
+          io.print(reset) if @@expand_tokens
+          io.print("\n") if @@force_colors && !io.tty?
         end
       end
     end
@@ -89,6 +107,14 @@ module UI
     @@buffer.clear
     @@last_buffer.clear
     io.print("\e[2J\e[H")  # Clear screen and go home
+  end
+
+  def self.hide_cursor
+    STDERR.print("\e[?25l")
+  end
+
+  def self.show_cursor
+    STDERR.print("\e[?25h")
   end
 
   def self.read_key
@@ -121,10 +147,23 @@ module UI
     @@width = nil
   end
 
+  def self.disable_token_expansion
+    @@expand_tokens = false
+  end
+
+  def self.disable_colors
+    @@expand_tokens = false  # Disabling colors means tokens won't expand to ANSI
+  end
+
+  def self.force_colors
+    @@force_colors = true
+  end
+
   # Expand tokens in a string to ANSI sequences
   def self.expand_tokens(str)
+    return str unless @@expand_tokens
     str.gsub(/\{.*?\}/) do |match|
-      TOKEN_MAP.fetch(match) { raise "Unknown token: #{match}" }
+      TOKEN_MAP.fetch(match) { match }  # Leave unknown tokens unchanged
     end
   end
 
@@ -142,9 +181,12 @@ class TrySelector
     @all_trials = nil  # Memoized trials
     @base_path = base_path
     @delete_status = nil  # Status message for deletions
+    @delete_mode = false  # Whether we're in deletion mode
+    @marked_for_deletion = []  # Paths marked for deletion
     @test_render_once = test_render_once
     @test_no_cls = test_no_cls
     @test_keys = test_keys
+    @test_had_keys = test_keys && !test_keys.empty?
     @test_confirm = test_confirm
     @old_winch_handler = nil  # Store original SIGWINCH handler
 
@@ -156,8 +198,9 @@ class TrySelector
     # This allows stdout to be captured for the shell commands
     setup_terminal
 
-    # In test mode, render once and exit without TTY requirements
-    if @test_render_once
+    # In test mode with no keys, render once and exit without TTY requirements
+    # If test_keys are provided, run the full loop
+    if @test_render_once && (@test_keys.nil? || @test_keys.empty?)
       tries = get_tries
       render(tries)
       return nil
@@ -184,19 +227,20 @@ class TrySelector
   def setup_terminal
     unless @test_no_cls
       UI.cls
-      STDERR.print("\e[2J\e[H\e[?25l")  # Direct clear screen, home, hide cursor
+      UI.hide_cursor
     end
 
     # Handle terminal resize
     @old_winch_handler = Signal.trap('WINCH') do
       UI.refresh_size
+      UI.cls
     end
   end
 
   def restore_terminal
-    # Clear screen completely before restoring (skip in test mode)
     unless @test_no_cls
-      STDERR.print("\e[2J\e[H\e[?25h")  # Direct clear, home, show cursor
+      UI.cls
+      UI.show_cursor
     end
 
     # Restore original SIGWINCH handler
@@ -287,10 +331,10 @@ class TrySelector
           is_boundary = (i == 0) || (text_lower[i-1].match?(/\W/))
           score += 1.0 if is_boundary
 
-          # Proximity bonus: 1/sqrt(distance) gives nice decay
+          # Proximity bonus: 2/sqrt(gap+1) gives nice decay
           if last_pos >= 0
             gap = i - last_pos - 1
-            score += 1.0 / Math.sqrt(gap + 1)
+            score += 2.0 / Math.sqrt(gap + 1)
           end
 
           last_pos = i
@@ -310,19 +354,10 @@ class TrySelector
       score *= (10.0 / (text.length + 10.0))  # Smooth penalty that doesn't dominate
     end
 
-    # Always apply time-based scoring (but less aggressively)
-    now = Time.now
-
-    # Creation time bonus - newer is better
-    if ctime
-      days_old = (now - ctime) / 86400.0
-      score += 2.0 / Math.sqrt(days_old + 1)
-    end
-
-    # Access time bonus - recently accessed is better
+    # Recency bonus based on mtime (hours since access)
     if mtime
-      hours_since_access = (now - mtime) / 3600.0
-      score += 3.0 / Math.sqrt(hours_since_access + 1)  # Reduced weight
+      hours_since_access = (Time.now - mtime) / 3600.0
+      score += 3.0 / Math.sqrt(hours_since_access + 1)
     end
 
     score
@@ -342,13 +377,18 @@ class TrySelector
 
       case key
       when "\r"  # Enter (carriage return)
-        if @cursor_pos < tries.length
+        if @delete_mode && !@marked_for_deletion.empty?
+          # Confirm deletion of marked items
+          confirm_batch_delete(tries)
+          break if @selected
+        elsif @cursor_pos < tries.length
           handle_selection(tries[@cursor_pos])
+          break if @selected
         else
           # Selected "Create new"
           handle_create_new
+          break if @selected
         end
-        break if @selected
       when "\e[A", "\x10", "\x0B"  # Up arrow or Ctrl-P or Ctrl-K
         @cursor_pos = [@cursor_pos - 1, 0].max
       when "\e[B", "\x0E", "\n"  # Down arrow or Ctrl-N or Ctrl-J
@@ -360,13 +400,27 @@ class TrySelector
       when "\x7F", "\b"  # Backspace
         @input_buffer = @input_buffer[0...-1] if @input_buffer.length > 0
         @cursor_pos = 0
-      when "\x04"  # Ctrl-D
+      when "\x04"  # Ctrl-D - toggle mark for deletion
         if @cursor_pos < tries.length
-          handle_delete(tries[@cursor_pos])
+          path = tries[@cursor_pos][:path]
+          if @marked_for_deletion.include?(path)
+            @marked_for_deletion.delete(path)
+          else
+            @marked_for_deletion << path
+            @delete_mode = true
+          end
+          # Exit delete mode if no more marks
+          @delete_mode = false if @marked_for_deletion.empty?
         end
       when "\x03", "\e"  # Ctrl-C or ESC
-        @selected = nil
-        break
+        if @delete_mode
+          # Exit delete mode, clear marks
+          @marked_for_deletion.clear
+          @delete_mode = false
+        else
+          @selected = nil
+          break
+        end
       when String
         # Only accept printable characters, not escape sequences
         if key.length == 1 && key =~ /[a-zA-Z0-9\-\_\. ]/
@@ -383,6 +437,8 @@ class TrySelector
     if @test_keys && !@test_keys.empty?
       return @test_keys.shift
     end
+    # In test mode with no more keys, auto-exit by returning ESC
+    return "\e" if @test_had_keys && @test_keys && @test_keys.empty?
     UI.read_key
   end
 
@@ -394,12 +450,12 @@ class TrySelector
     separator = "─" * (term_width - 1)
 
     # Header
-    UI.puts "{h1}📁 Try Directory Selection"
-    UI.puts "{dim_text}#{separator}"
+    UI.puts "{h1}📁 Try Selector{reset}"
+    UI.puts "{dim}#{separator}{/fg}"
 
     # Search input
-    UI.puts "{highlight}Search: {reset}#{@input_buffer}"
-    UI.puts "{dim_text}#{separator}"
+    UI.puts "{dim}Search:{/fg} {b}#{@input_buffer}{/b}"
+    UI.puts "{dim}#{separator}{/fg}"
 
     # Calculate visible window based on actual terminal height
     max_visible = [term_height - 8, 3].max
@@ -423,17 +479,21 @@ class TrySelector
 
       # Print cursor/selection indicator
       is_selected = idx == @cursor_pos
-      UI.print(is_selected ? "{highlight}→ {reset_fg}" : "  ")
+      UI.print(is_selected ? "{b}→ {/b}" : "  ")
 
       # Display try directory or "Create new" option
       if idx < tries.length
         try_dir = tries[idx]
+        is_marked = @marked_for_deletion.include?(try_dir[:path])
+
+        # Start strike formatting for marked items
+        UI.print "{strike}" if is_marked
 
         # Render the folder icon (always outside selection)
         UI.print "📁 "
 
         # Start selection highlighting after icon
-        UI.print "{start_selected}" if is_selected
+        UI.print "{section}" if is_selected
 
         # Format directory name with date styling
         if try_dir[:basename] =~ /^(\d{4}-\d{2}-\d{2})-(.+)$/
@@ -441,14 +501,14 @@ class TrySelector
           name_part = $2
 
           # Render the date part (faint)
-          UI.print "{dim_text}#{date_part}{reset_fg}"
+          UI.print "{dim}#{date_part}{/fg}"
 
           # Render the separator (very faint)
           separator_matches = !@input_buffer.empty? && @input_buffer.include?('-')
           if separator_matches
-            UI.print "{highlight}-{reset_fg}"
+            UI.print "{b}-{/b}"
           else
-            UI.print "{dim_text}-{reset_fg}"
+            UI.print "{dim}-{/fg}"
           end
 
 
@@ -486,26 +546,26 @@ class TrySelector
 
         # Print padding and metadata
         UI.print padding
-        UI.print "{end_selected}" if is_selected
-        UI.print " {dim_text}#{meta_text}{reset_fg}"
+        UI.print "{/section}" if is_selected
+        UI.print " {dim}#{meta_text}{/fg}"
+        UI.print "{/strike}" if is_marked
 
       else
         # This is the "Create new" option
-        UI.print "+ "  # Plus sign outside selection
+        UI.print "{section}" if is_selected
 
-        UI.print "{start_selected}" if is_selected
-
+        date_prefix = Time.now.strftime("%Y-%m-%d")
         display_text = if @input_buffer.empty?
-          "Create new"
+          "📂 Create new: #{date_prefix}-"
         else
-          "Create new: #{@input_buffer}"
+          "📂 Create new: #{date_prefix}-#{@input_buffer}"
         end
 
         UI.print display_text
 
         # Pad to full width
         text_width = display_text.length
-        padding_needed = term_width - 5 - text_width  # -5 for arrow + "+ "
+        padding_needed = term_width - 3 - text_width  # -3 for arrow + space
         UI.print " " * [padding_needed, 1].max
       end
 
@@ -515,19 +575,22 @@ class TrySelector
 
     # Scroll indicator if needed
     if total_items > max_visible
-      UI.puts "{dim_text}#{separator}"
-      UI.puts "{dim_text}[#{@scroll_offset + 1}-#{visible_end}/#{total_items}]"
+      UI.puts "{dim}#{separator}{/fg}"
+      UI.puts "{dim}[#{@scroll_offset + 1}-#{visible_end}/#{total_items}]{/fg}"
     end
 
     # Instructions at bottom
-    UI.puts "{dim_text}#{separator}"
+    UI.puts "{dim}#{separator}{/fg}"
 
     # Show delete status if present, otherwise show instructions
     if @delete_status
-      UI.puts "{highlight}#{@delete_status}{reset}"
+      UI.puts "{b}#{@delete_status}{/b}"
       @delete_status = nil  # Clear after showing
+    elsif @delete_mode
+      count = @marked_for_deletion.length
+      UI.puts "{strike} DELETE MODE {/strike} #{count} marked  |  Ctrl-D: Toggle  Enter: Confirm  Esc: Cancel"
     else
-      UI.puts "{dim_text}↑↓/Ctrl-P,N,J,K: Navigate  Enter: Select  Ctrl-D: Delete  ESC: Cancel{reset}"
+      UI.puts "{dim}↑↓: Navigate  Enter: Select  Ctrl-D: Delete  Esc: Cancel{/fg}"
     end
 
     # Flush the double buffer
@@ -543,18 +606,16 @@ class TrySelector
     hours = minutes / 60
     days = hours / 24
 
-    if seconds < 10
+    if seconds < 60
       "just now"
     elsif minutes < 60
       "#{minutes.to_i}m ago"
     elsif hours < 24
       "#{hours.to_i}h ago"
-    elsif days < 30
+    elsif days < 7
       "#{days.to_i}d ago"
-    elsif days < 365
-      "#{(days/30).to_i}mo ago"
     else
-      "#{(days/365).to_i}y ago"
+      "#{(days/7).to_i}w ago"
     end
   end
 
@@ -592,7 +653,7 @@ class TrySelector
 
     text.chars.each_with_index do |char, i|
       if query_index < query_chars.length && text_lower[i] == query_chars[query_index]
-        result += "{highlight}#{char}{text}"  # Yellow bold for matches (preserve bg)
+        result += "{b}#{char}{/b}"  # Bold yellow for matches
         query_index += 1
       else
         result += char
@@ -613,11 +674,9 @@ class TrySelector
 
     text.chars.each_with_index do |char, i|
       if query_index < query_chars.length && text_lower[i] == query_chars[query_index]
-        # Use same yellow for matches regardless of selection
-        result += "{highlight}#{char}{text}"  # Preserve bg with text token
+        result += "{b}#{char}{/b}"  # Bold yellow for matches
         query_index += 1
       else
-        # Regular text
         result += char
       end
     end
@@ -646,7 +705,7 @@ class TrySelector
       UI.cls  # Clear screen using UI system
       UI.puts "{h2}Enter new try name"
       UI.puts
-      UI.puts "> {dim_text}#{date_prefix}-{reset}"
+      UI.puts "> {dim}#{date_prefix}-{/fg}"
       UI.flush
       STDERR.print("\e[?25h")
 
@@ -668,27 +727,35 @@ class TrySelector
     end
   end
 
-  def handle_delete(try_dir)
+  def confirm_batch_delete(tries)
+    # Find marked items with their info
+    marked_items = tries.select { |t| @marked_for_deletion.include?(t[:path]) }
+    return if marked_items.empty?
+
     # Show delete confirmation dialog
-
-    size = `du -sh #{try_dir[:path]}`.strip.split(/\s+/).first rescue "???"
-    files = `find #{try_dir[:path]} -type f | wc -l`.strip.split(/\s+/).first rescue "???"
-
     UI.cls
-    UI.puts "{h2}Delete Directory"
+    UI.puts "{h2}Delete #{marked_items.length} Director#{marked_items.length == 1 ? 'y' : 'ies'}{reset}"
     UI.puts
-    UI.puts "Are you sure you want to delete: {highlight}#{try_dir[:basename]}{reset}"
-    UI.puts "  {dim_text}in #{try_dir[:path]}{reset}"
-    UI.puts "  {dim_text}files: #{files} files{reset}"
-    UI.puts "  {dim_text}size: #{size}{reset}"
+
+    marked_items.each do |item|
+      UI.puts "  {strike}📁 #{item[:basename]}{/strike}"
+    end
+
     UI.puts
-    UI.puts "{highlight}Type {text}YES{highlight} to confirm: "
+    UI.puts "{b}Type {/b}YES{b} to confirm deletion: {/b}"
     UI.flush
     STDERR.print("\e[?25h")  # Show cursor after flushing
 
-    # Confirmation input: in tests, use injected value; otherwise read from TTY
+    # Confirmation input: in tests, read from test_keys; otherwise read from TTY
     confirmation = ""
-    if @test_confirm || !STDERR.tty?
+    if @test_keys && !@test_keys.empty?
+      # Read chars from test_keys until Enter
+      while @test_keys && !@test_keys.empty?
+        ch = @test_keys.shift
+        break if ch == "\r" || ch == "\n"
+        confirmation += ch
+      end
+    elsif @test_confirm || !STDERR.tty?
       confirmation = (@test_confirm || STDIN.gets)&.chomp.to_s
     else
       STDERR.cooked do
@@ -699,18 +766,32 @@ class TrySelector
 
     if confirmation == "YES"
       begin
-        # If the directory we're deleting is the current directory, change to parent first
-        if Dir.pwd == try_dir[:path]
-          Dir.chdir(@base_path)
+        base_real = File.realpath(@base_path)
+
+        # Validate all paths first
+        validated_paths = []
+        marked_items.each do |item|
+          target_real = File.realpath(item[:path])
+          unless target_real.start_with?(base_real + "/")
+            raise "Safety check failed: #{target_real} is not inside #{base_real}"
+          end
+          validated_paths << { path: target_real, basename: item[:basename] }
         end
-        FileUtils.rm_rf(try_dir[:path])
-        @delete_status = "Deleted: #{try_dir[:basename]}"
-        @all_tries = nil  # Clear cache to reload tries
+
+        # Return delete action with all paths
+        @selected = { type: :delete, paths: validated_paths, base_path: base_real }
+        names = validated_paths.map { |p| p[:basename] }.join(", ")
+        @delete_status = "Deleted: {strike}#{names}{/strike}"
+        @all_tries = nil  # Clear cache
+        @marked_for_deletion.clear
+        @delete_mode = false
       rescue => e
         @delete_status = "Error: #{e.message}"
       end
     else
       @delete_status = "Delete cancelled"
+      @marked_for_deletion.clear
+      @delete_mode = false
     end
 
     # Hide cursor again for main UI
@@ -721,65 +802,80 @@ end
 # Main execution with OptionParser subcommands
 if __FILE__ == $0
 
+  VERSION = "1.1.0"
+
   def print_global_help
     text = <<~HELP
-      {h1}try something!{reset}
+      {h1}try{reset} v#{VERSION} - ephemeral workspace manager
 
-      Lightweight experiments for people with ADHD
+      To use try, add to your shell config:
 
-      this tool is not meant to be used directly,
-      but added to your ~/.zshrc or ~/.bashrc:
+        {dim}# bash/zsh (~/.bashrc or ~/.zshrc){/fg}
+        {b}eval "$(try init ~/src/tries)"{/b}
 
-        {highlight}eval "$(#$0 init ~/src/tries)"{reset}
+        {dim}# fish (~/.config/fish/config.fish){/fg}
+        {b}eval (try init ~/src/tries | string collect){/b}
 
-      for fish shell, add to ~/.config/fish/config.fish:
+      {h2}Usage:{reset}
+        try [query]           Interactive directory selector
+        try clone <url>       Clone repo into dated directory
+        try worktree <name>   Create worktree from current git repo
+        try --help            Show this help
 
-        {highlight}eval (#$0 init ~/src/tries | string collect){reset}
+      {h2}Commands:{reset}
+        init [path]           Output shell function definition
+        clone <url> [name]    Clone git repo into date-prefixed directory
+        worktree <name>       Create worktree in dated directory
 
-      {h2}Usage:{text}
+      {h2}Examples:{reset}
+        try                   Open interactive selector
+        try project           Selector with initial filter
+        try clone https://github.com/user/repo
+        try worktree feature-branch
 
-        init [--path PATH]  # Initialize shell function for aliasing
-        cd [QUERY] [name?]  # Interactive selector; Git URL shorthand supported
-        clone <git-uri> [name]  # Clone git repo into date-prefixed directory
-        worktree dir [name]  # Create date-prefixed dir; add worktree from CWD if git repo
-        worktree <repo-path> [name]  # Same as above, but source repo is <repo-path>
-
-      {h2}Clone Examples:{text}
-
-        try clone https://github.com/tobi/try.git
-        # Creates: 2025-08-27-tobi-try
-
-        try clone https://github.com/tobi/try.git my-fork
-        # Creates: my-fork
-
-        try https://github.com/tobi/try.git
-        # Shorthand for clone (same as first example)
-
-      {h2}Worktree Examples:{text}
-
-        try worktree dir
-        # From current git repo, creates: 2025-08-27-repo-name and adds detached worktree
-
-        try worktree ~/src/github.com/tobi/try my-branch
-        # From given repo path, creates: 2025-08-27-my-branch and adds detached worktree
+      {h2}Manual mode (without alias):{reset}
+        try exec [query]      Output shell script to eval
 
       {h2}Defaults:{reset}
-        Default path: {dim_text}~/src/tries{reset} (override with --path on commands)
-        Current default: {dim_text}#{TrySelector::TRY_PATH}{reset}
+        Default path: {dim}~/src/tries{/fg}
+        Current: {dim}#{TrySelector::TRY_PATH}{/fg}
     HELP
     # Help should not manipulate the screen; print plainly to STDOUT.
-    # Expand tokens to ANSI only when STDOUT is a TTY; otherwise strip tokens.
-    out = if STDOUT.tty?
-      UI.expand_tokens(text)
+    # Expand tokens to ANSI when TTY, strip when not TTY (unless --no-expand-tokens keeps them)
+    out = UI.expand_tokens(text)
+    # If tokens weren't expanded (no-expand mode), keep them. Otherwise strip if non-tty.
+    if STDOUT.tty? || out.include?('{')
+      # TTY or tokens preserved by no-expand mode
     else
-      text.gsub(/\{.*?\}/, '')
+      out = text.gsub(/\{.*?\}/, '')
     end
     STDOUT.print(out)
+  end
+
+  # Process color-related flags early
+  if ARGV.delete('--no-expand-tokens')
+    UI.disable_token_expansion
+  end
+
+  # --no-colors disables ANSI color output
+  if ARGV.delete('--no-colors')
+    UI.disable_colors
+  end
+
+  # NO_COLOR environment variable disables colors (standard convention)
+  if ENV['NO_COLOR'] && !ENV['NO_COLOR'].empty?
+    UI.disable_colors
   end
 
   # Global help: show for --help/-h anywhere
   if ARGV.include?("--help") || ARGV.include?("-h")
     print_global_help
+    exit 0
+  end
+
+  # Version flag
+  if ARGV.include?("--version") || ARGV.include?("-v")
+    puts "try #{VERSION}"
     exit 0
   end
 
@@ -836,43 +932,73 @@ if __FILE__ == $0
     arg.match?(%r{^(https?://|git@)}) || arg.include?('github.com') || arg.include?('gitlab.com') || arg.end_with?('.git')
   end
 
+  # Extract all options BEFORE getting command (they can appear anywhere)
   tries_path = extract_option_with_value!(ARGV, '--path') || TrySelector::TRY_PATH
-  
-  command = ARGV.shift
   tries_path = File.expand_path(tries_path)
 
   # Test-only flags (undocumented; aid acceptance tests)
+  # Must be extracted before command shift since they can come before command
   and_type = extract_option_with_value!(ARGV, '--and-type')
   and_exit = !!ARGV.delete('--and-exit')
   and_keys_raw = extract_option_with_value!(ARGV, '--and-keys')
   and_confirm = extract_option_with_value!(ARGV, '--and-confirm')
+  # Note: --no-expand-tokens and --no-colors are processed early (before --help check)
+
+  # Enable color output in test mode for proper output verification
+  if and_exit || and_keys_raw
+    UI.force_colors
+  end
+
+  command = ARGV.shift
 
   def parse_test_keys(spec)
     return nil unless spec && !spec.empty?
-    tokens = spec.split(/,\s*/)
-    keys = []
-    tokens.each do |tok|
-      up = tok.upcase
-      case up
-      when 'UP' then keys << "\e[A"
-      when 'DOWN' then keys << "\e[B"
-      when 'LEFT' then keys << "\e[D"
-      when 'RIGHT' then keys << "\e[C"
-      when 'ENTER' then keys << "\r"
-      when 'ESC' then keys << "\e"
-      when 'BACKSPACE' then keys << "\x7F"
-      when 'CTRL-D', 'CTRLD' then keys << "\x04"
-      when 'CTRL-P', 'CTRLP' then keys << "\x10"
-      when 'CTRL-N', 'CTRLN' then keys << "\x0E"
-      when 'CTRL-J', 'CTRLJ' then keys << "\n"
-      when 'CTRL-K', 'CTRLK' then keys << "\x0B"
-      when /^TYPE=(.*)$/
-        $1.each_char { |ch| keys << ch }
-      else
-        keys << tok if tok.length == 1
+
+    # Detect mode: if contains comma OR is purely uppercase letters/hyphens, use token mode
+    # Otherwise use raw character mode (for spec tests that pass literal key sequences)
+    use_token_mode = spec.include?(',') || spec.match?(/^[A-Z\-]+$/)
+
+    if use_token_mode
+      tokens = spec.split(/,\s*/)
+      keys = []
+      tokens.each do |tok|
+        up = tok.upcase
+        case up
+        when 'UP' then keys << "\e[A"
+        when 'DOWN' then keys << "\e[B"
+        when 'LEFT' then keys << "\e[D"
+        when 'RIGHT' then keys << "\e[C"
+        when 'ENTER' then keys << "\r"
+        when 'ESC' then keys << "\e"
+        when 'BACKSPACE' then keys << "\x7F"
+        when 'CTRL-D', 'CTRLD' then keys << "\x04"
+        when 'CTRL-P', 'CTRLP' then keys << "\x10"
+        when 'CTRL-N', 'CTRLN' then keys << "\x0E"
+        when 'CTRL-J', 'CTRLJ' then keys << "\n"
+        when 'CTRL-K', 'CTRLK' then keys << "\x0B"
+        when /^TYPE=(.*)$/
+          $1.each_char { |ch| keys << ch }
+        else
+          keys << tok if tok.length == 1
+        end
       end
+      keys
+    else
+      # Raw character mode: each character (including escape sequences) is a key
+      keys = []
+      i = 0
+      while i < spec.length
+        if spec[i] == "\e" && i + 2 < spec.length && spec[i + 1] == '['
+          # Escape sequence like \e[A for arrow keys
+          keys << spec[i, 3]
+          i += 3
+        else
+          keys << spec[i]
+          i += 1
+        end
+      end
+      keys
     end
-    keys
   end
   and_keys = parse_test_keys(and_keys_raw)
 
@@ -896,7 +1022,7 @@ if __FILE__ == $0
     [
       { type: 'target', path: full_path },
       { type: 'mkdir' },
-      { type: 'echo', msg: "Using {highlight}git clone{reset_fg} to create this trial from #{git_uri}." },
+      { type: 'echo', msg: "Using {b}git clone{/b} to create this trial from #{git_uri}." },
       { type: 'git-clone', uri: git_uri },
       { type: 'touch'},
       { type: 'cd' }
@@ -972,6 +1098,12 @@ if __FILE__ == $0
       path_arg = args.shift
       custom = args.join(' ')
       repo_dir = File.expand_path(path_arg)
+      # Bare "try ." requires a name argument (too easy to invoke accidentally)
+      if path_arg == '.' && (custom.nil? || custom.strip.empty?)
+        STDERR.puts "Error: 'try .' requires a name argument"
+        STDERR.puts "Usage: try . <name>"
+        exit 1
+      end
       base = if custom && !custom.strip.empty?
         custom.gsub(/\s+/, '-')
       else
@@ -988,7 +1120,7 @@ if __FILE__ == $0
       ]
       # Only add worktree when a .git directory exists at that path
       if File.directory?(File.join(repo_dir, '.git'))
-        tasks << { type: 'echo', msg: "Using {highlight}git worktree{reset_fg} to create this trial from #{repo_dir}." }
+        tasks << { type: 'echo', msg: "Using {b}git worktree{/b} to create this trial from #{repo_dir}." }
         tasks << { type: 'git-worktree', repo: repo_dir }
       end
       tasks += [
@@ -1012,7 +1144,7 @@ if __FILE__ == $0
       return [
         { type: 'target', path: full_path },
         { type: 'mkdir' },
-        { type: 'echo', msg: "Using {highlight}git clone{reset_fg} to create this trial from #{git_uri}." },
+        { type: 'echo', msg: "Using {b}git clone{/b} to create this trial from #{git_uri}." },
         { type: 'git-clone', uri: git_uri },
         { type: 'touch' },
         { type: 'cd' }
@@ -1029,12 +1161,16 @@ if __FILE__ == $0
       test_keys: and_keys,
       test_confirm: and_confirm
     )
-    if and_exit
-      selector.run
-      exit 0
-    end
     result = selector.run
     return nil unless result
+
+    # Handle delete action - different task flow
+    if result[:type] == :delete
+      return [
+        { type: 'delete', paths: result[:paths], base_path: result[:base_path] }
+      ]
+    end
+
     tasks = [{ type: 'target', path: result[:path] }]
     tasks += [{ type: 'mkdir' }] if result[:type] == :mkdir
     tasks += [{ type: 'touch' }, { type: 'cd' }]
@@ -1042,16 +1178,29 @@ if __FILE__ == $0
   end
 
   # --- Shell emission helpers (moved out of UI) ---
-  def join_commands(parts)
-    parts.join(" \\\n  && ")
-  end
+  SCRIPT_WARNING = "# if you can read this, you didn't launch try from an alias. run try --help."
 
   def emit_script(parts)
-    puts join_commands(parts)
+    puts SCRIPT_WARNING
+    # Format: cmd1 && \
+    #   cmd2 && \
+    #   true
+    parts.each do |part|
+      puts "#{part} && \\"
+    end
+    puts "  true"
   end
 
   # tasks: [{type: 'target', path: '/abs/dir'}, {type: 'mkdir'|'touch'|'cd'|'git-clone'|'git-worktree', ...}]
+  # Special: delete task has its own format without target
   def emit_tasks_script(tasks)
+    # Handle delete specially - no target, just rm -rf with safety
+    delete_task = tasks.find { |t| t[:type] == 'delete' }
+    if delete_task
+      emit_delete_script(delete_task[:paths], delete_task[:base_path])
+      return
+    end
+
     target = tasks.find { |t| t[:type] == 'target' }
     full_path = target && target[:path]
     raise 'emit_tasks_script requires a target path' unless full_path
@@ -1083,6 +1232,26 @@ if __FILE__ == $0
       end
     end
     emit_script(parts)
+  end
+
+  # Emit safe delete script
+  # paths is an array of {path:, basename:} hashes (already validated to be inside base_path)
+  def emit_delete_script(paths, base_path)
+    q_base = "'" + base_path.gsub("'", %q('"'"')) + "'"
+    orig_pwd = "'" + Dir.pwd.gsub("'", %q('"'"')) + "'"
+
+    puts SCRIPT_WARNING
+    puts "cd #{q_base} && \\"
+
+    # For each path, emit: [[ -d name ]] && rm -rf name
+    paths.each do |item|
+      q_name = "'" + item[:basename].gsub("'", %q('"'"')) + "'"
+      puts "  [[ -d #{q_name} ]] && rm -rf #{q_name} && \\"
+    end
+
+    # End by trying to cd back to original PWD (or HOME if deleted)
+    puts "  ( cd #{orig_pwd} 2>/dev/null || cd \"$HOME\" ) && \\"
+    puts "  true"
   end
 
   # Return a unique directory name under tries_path by appending -2, -3, ... if needed
@@ -1136,6 +1305,91 @@ if __FILE__ == $0
   when 'init'
     cmd_init!(ARGV, tries_path)
     exit 0
+  when 'exec'
+    # try exec [query] is equivalent to: try exec cd [query]
+    # try exec clone/worktree/cd also supported
+    sub = ARGV.first
+    case sub
+    when 'clone'
+      ARGV.shift
+      tasks = cmd_clone!(ARGV, tries_path)
+      emit_tasks_script(tasks)
+    when 'worktree'
+      ARGV.shift
+      # Delegate to worktree handling below by re-processing
+      sub2 = ARGV.shift
+      case sub2
+      when nil, 'dir'
+        custom = ARGV.join(' ')
+        base = if custom && !custom.strip.empty?
+          custom.gsub(/\s+/, '-')
+        else
+          begin
+            File.basename(File.realpath(Dir.pwd))
+          rescue
+            File.basename(Dir.pwd)
+          end
+        end
+        date_prefix = Time.now.strftime("%Y-%m-%d")
+        base = resolve_unique_name_with_versioning(tries_path, date_prefix, base)
+        dir_name = "#{date_prefix}-#{base}"
+        full_path = File.join(tries_path, dir_name)
+        tasks = [
+          { type: 'target', path: full_path },
+          { type: 'mkdir' }
+        ]
+        if File.directory?(File.join(Dir.pwd, '.git'))
+          tasks << { type: 'echo', msg: "Using {b}git worktree{/b} to create this trial from #{Dir.pwd}." }
+          tasks << { type: 'git-worktree' }
+        end
+        tasks += [ { type: 'touch' }, { type: 'cd' } ]
+        emit_tasks_script(tasks)
+      else
+        repo_dir = File.expand_path(sub2)
+        custom = ARGV.join(' ')
+        base = if custom && !custom.strip.empty?
+          custom.gsub(/\s+/, '-')
+        else
+          begin
+            File.basename(File.realpath(repo_dir))
+          rescue
+            File.basename(repo_dir)
+          end
+        end
+        date_prefix = Time.now.strftime("%Y-%m-%d")
+        base = resolve_unique_name_with_versioning(tries_path, date_prefix, base)
+        dir_name = "#{date_prefix}-#{base}"
+        full_path = File.join(tries_path, dir_name)
+        tasks = [
+          { type: 'target', path: full_path },
+          { type: 'mkdir' }
+        ]
+        tasks << { type: 'echo', msg: "Using {b}git worktree{/b} to create this trial from #{repo_dir}." }
+        tasks << { type: 'git-worktree', repo: repo_dir }
+        tasks += [ { type: 'touch' }, { type: 'cd' } ]
+        emit_tasks_script(tasks)
+      end
+    when 'cd'
+      ARGV.shift
+      tasks = cmd_cd!(ARGV, tries_path, and_type, and_exit, and_keys, and_confirm)
+      if tasks
+        emit_tasks_script(tasks)
+        exit 0
+      else
+        puts "Cancelled."
+        exit 1
+      end
+    else
+      # try exec [query] → interactive selector
+      tasks = cmd_cd!(ARGV, tries_path, and_type, and_exit, and_keys, and_confirm)
+      if tasks
+        emit_tasks_script(tasks)
+        exit 0
+      else
+        puts "Cancelled."
+        exit 1
+      end
+    end
   when 'worktree'
     sub = ARGV.shift
     case sub
@@ -1160,7 +1414,7 @@ if __FILE__ == $0
         { type: 'mkdir' }
       ]
       if File.directory?(File.join(Dir.pwd, '.git'))
-        tasks << { type: 'echo', msg: "Using {highlight}git worktree{reset_fg} to create this trial from #{Dir.pwd}." }
+        tasks << { type: 'echo', msg: "Using {b}git worktree{/b} to create this trial from #{Dir.pwd}." }
         tasks << { type: 'git-worktree' }
       end
       tasks += [ { type: 'touch' }, { type: 'cd' } ]
@@ -1187,8 +1441,8 @@ if __FILE__ == $0
         { type: 'target', path: full_path },
         { type: 'mkdir' }
       ]
-      # We’ll ask emit_tasks_script to add a worktree from the given repo path
-      tasks << { type: 'echo', msg: "Using {highlight}git worktree{reset_fg} to create this trial from #{repo_dir}." }
+      # We'll ask emit_tasks_script to add a worktree from the given repo path
+      tasks << { type: 'echo', msg: "Using {b}git worktree{/b} to create this trial from #{repo_dir}." }
       tasks << { type: 'git-worktree', repo: repo_dir }
       tasks += [ { type: 'touch' }, { type: 'cd' } ]
       emit_tasks_script(tasks)
@@ -1196,8 +1450,13 @@ if __FILE__ == $0
     end
   when 'cd'
     tasks = cmd_cd!(ARGV, tries_path, and_type, and_exit, and_keys, and_confirm)
-    emit_tasks_script(tasks) if tasks
-    exit 0
+    if tasks
+      emit_tasks_script(tasks)
+      exit 0
+    else
+      puts "Cancelled."
+      exit 1
+    end
   else
     warn "Unknown command: #{command}"
     print_global_help

@@ -5,7 +5,8 @@ require_relative '../try.rb'
 class TestUITokens < Test::Unit::TestCase
 
   def test_token_map_contains_core_tokens
-    %w[{text} {dim_text} {h1} {h2} {highlight} {reset} {reset_bg} {reset_fg}].each do |tok|
+    # Token names per spec: {b}, {/b}, {dim}, {/fg}, {text}, {reset}, {h1}, {h2}, {section}, {/section}
+    %w[{text} {dim} {h1} {h2} {b} {/b} {/fg} {reset} {section} {/section}].each do |tok|
       assert(UI::TOKEN_MAP.key?(tok), "missing token #{tok}")
     end
   end
