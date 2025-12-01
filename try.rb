@@ -132,6 +132,8 @@ module UI
 
   def self.height
     @@height ||= begin
+      env_h = ENV['TRY_HEIGHT'].to_i
+      return env_h if env_h > 0
       h = `tput lines 2>/dev/null`.strip.to_i
       h > 0 ? h : 24
     end
@@ -139,6 +141,8 @@ module UI
 
   def self.width
     @@width ||= begin
+      env_w = ENV['TRY_WIDTH'].to_i
+      return env_w if env_w > 0
       w = `tput cols 2>/dev/null`.strip.to_i
       w > 0 ? w : 80
     end
