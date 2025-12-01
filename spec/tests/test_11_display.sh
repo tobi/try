@@ -87,11 +87,11 @@ touch "$LONG_DIR"
 output=$(try_run --path="$TEST_TRIES" --and-exit exec 2>&1)
 # The metadata (e.g., "ago, 0.") should appear even for long names
 # Check that we see partial score at end (like ", 0." or "go, 0")
-if echo "$output" | grep -E "long-directory.*[0-9]\.[0-9]"; then
+if echo "$output" | grep -qE "long-directory.*[0-9]\.[0-9]"; then
     pass
 else
     # At minimum, some metadata fragment should be visible
-    if echo "$output" | grep -E "long-directory.*(ago|[0-9]\.)"; then
+    if echo "$output" | grep -qE "long-directory.*(ago|[0-9]\.)"; then
         pass
     else
         fail "long names should show partial metadata" "partial metadata fragment" "$output" "tui_spec.md#metadata-display"
