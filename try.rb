@@ -180,9 +180,11 @@ class TrySelector
 
   def initialize(search_term = "", base_path: TRY_PATH, initial_input: nil, test_render_once: false, test_no_cls: false, test_keys: nil, test_confirm: nil)
     @search_term = search_term.gsub(/\s+/, '-')
-    @cursor_pos = 0
+    @cursor_pos = 0  # Navigation cursor (list position)
+    @input_cursor_pos = 0  # Text cursor (position within search buffer)
     @scroll_offset = 0
     @input_buffer = initial_input ? initial_input.gsub(/\s+/, '-') : @search_term
+    @input_cursor_pos = @input_buffer.length  # Start at end of buffer
     @selected = nil
     @all_trials = nil  # Memoized trials
     @base_path = base_path
@@ -396,17 +398,56 @@ class TrySelector
           handle_create_new
           break if @selected
         end
-      when "\e[A", "\x10", "\x0B"  # Up arrow or Ctrl-P or Ctrl-K
+      when "\e[A", "\x10"  # Up arrow or Ctrl-P
         @cursor_pos = [@cursor_pos - 1, 0].max
-      when "\e[B", "\x0E", "\n"  # Down arrow or Ctrl-N or Ctrl-J
+      when "\e[B", "\x0E"  # Down arrow or Ctrl-N
         @cursor_pos = [@cursor_pos + 1, total_items - 1].min
       when "\e[C"  # Right arrow - ignore
         # Do nothing
       when "\e[D"  # Left arrow - ignore
         # Do nothing
       when "\x7F", "\b"  # Backspace
-        @input_buffer = @input_buffer[0...-1] if @input_buffer.length > 0
+        if @input_cursor_pos > 0
+          @input_buffer = @input_buffer[0...(@input_cursor_pos-1)] + @input_buffer[@input_cursor_pos..-1]
+          @input_cursor_pos -= 1
+        end
+        @cursor_pos = 0  # Reset list selection when typing
+      when "\x01"  # Ctrl-A - beginning of line
+        @input_cursor_pos = 0
+      when "\x05"  # Ctrl-E - end of line
+        @input_cursor_pos = @input_buffer.length
+      when "\x02"  # Ctrl-B - backward char
+        @input_cursor_pos = [@input_cursor_pos - 1, 0].max
+      when "\x06"  # Ctrl-F - forward char
+        @input_cursor_pos = [@input_cursor_pos + 1, @input_buffer.length].min
+      when "\x08"  # Ctrl-H - backward delete char (same as backspace)
+        if @input_cursor_pos > 0
+          @input_buffer = @input_buffer[0...(@input_cursor_pos-1)] + @input_buffer[@input_cursor_pos..-1]
+          @input_cursor_pos -= 1
+        end
         @cursor_pos = 0
+      when "\x0B"  # Ctrl-K - kill to end of line
+        @input_buffer = @input_buffer[0...@input_cursor_pos]
+      when "\x17"  # Ctrl-W - delete word backward (alphanumeric)
+        if @input_cursor_pos > 0
+          # Start from cursor position and move backward
+          pos = @input_cursor_pos - 1
+
+          # Skip trailing non-alphanumeric
+          while pos >= 0 && @input_buffer[pos] !~ /[a-zA-Z0-9]/
+            pos -= 1
+          end
+
+          # Skip backward over alphanumeric chars
+          while pos >= 0 && @input_buffer[pos] =~ /[a-zA-Z0-9]/
+            pos -= 1
+          end
+
+          # Delete from pos+1 to cursor
+          new_pos = pos + 1
+          @input_buffer = @input_buffer[0...new_pos] + @input_buffer[@input_cursor_pos..-1]
+          @input_cursor_pos = new_pos
+        end
       when "\x04"  # Ctrl-D - toggle mark for deletion
         if @cursor_pos < tries.length
           path = tries[@cursor_pos][:path]
@@ -431,8 +472,9 @@ class TrySelector
       when String
         # Only accept printable characters, not escape sequences
         if key.length == 1 && key =~ /[a-zA-Z0-9\-\_\. ]/
-          @input_buffer += key
-          @cursor_pos = 0
+          @input_buffer = @input_buffer[0...@input_cursor_pos] + key + @input_buffer[@input_cursor_pos..-1]
+          @input_cursor_pos += 1
+          @cursor_pos = 0  # Reset list selection when typing
         end
       end
     end
@@ -471,8 +513,12 @@ class TrySelector
     UI.puts "{h1}📁 Try Selector{reset}"
     UI.puts "{dim}#{separator}{/fg}"
 
-    # Search input with cursor
-    UI.puts "{dim}Search:{/fg} {b}#{@input_buffer}{/b}{cursor}"
+    # Search input with cursor at correct position
+    before_cursor = @input_buffer[0...@input_cursor_pos]
+    char_at_cursor = @input_buffer[@input_cursor_pos] || " "
+    after_cursor = @input_buffer[(@input_cursor_pos + 1)..-1] || ""
+    # Render cursor by inverting the character at cursor position
+    UI.puts "{dim}Search:{/fg} {b}#{before_cursor}\e[7m#{char_at_cursor}\e[27m#{after_cursor}{/b}"
     UI.puts "{dim}#{separator}{/fg}"
 
     # Calculate visible window based on actual terminal height
@@ -1006,11 +1052,16 @@ if __FILE__ == $0
         when 'ENTER' then keys << "\r"
         when 'ESC' then keys << "\e"
         when 'BACKSPACE' then keys << "\x7F"
+        when 'CTRL-A', 'CTRLA' then keys << "\x01"
+        when 'CTRL-B', 'CTRLB' then keys << "\x02"
         when 'CTRL-D', 'CTRLD' then keys << "\x04"
-        when 'CTRL-P', 'CTRLP' then keys << "\x10"
-        when 'CTRL-N', 'CTRLN' then keys << "\x0E"
-        when 'CTRL-J', 'CTRLJ' then keys << "\n"
+        when 'CTRL-E', 'CTRLE' then keys << "\x05"
+        when 'CTRL-F', 'CTRLF' then keys << "\x06"
+        when 'CTRL-H', 'CTRLH' then keys << "\x08"
         when 'CTRL-K', 'CTRLK' then keys << "\x0B"
+        when 'CTRL-N', 'CTRLN' then keys << "\x0E"
+        when 'CTRL-P', 'CTRLP' then keys << "\x10"
+        when 'CTRL-W', 'CTRLW' then keys << "\x17"
         when /^TYPE=(.*)$/
           $1.each_char { |ch| keys << ch }
         else

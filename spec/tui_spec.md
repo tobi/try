@@ -204,14 +204,25 @@ Tokens are preserved intact - never split a `{b}...{/b}` pair.
 
 ## Keyboard Input
 
+### Navigation
 | Key | Action |
 |-----|--------|
-| ↑ / Ctrl-P / Ctrl-K | Move selection up |
-| ↓ / Ctrl-N / Ctrl-J | Move selection down |
+| ↑ / Ctrl-P | Move selection up |
+| ↓ / Ctrl-N | Move selection down |
 | Enter | Select current entry |
 | Esc / Ctrl-C | Cancel selection |
 | Ctrl-D | Delete selected directory |
-| Backspace | Delete last query character |
+
+### Line Editing (in search input)
+| Key | Action |
+|-----|--------|
+| Ctrl-A | Move cursor to beginning of line |
+| Ctrl-E | Move cursor to end of line |
+| Ctrl-B | Move cursor backward one character |
+| Ctrl-F | Move cursor forward one character |
+| Backspace / Ctrl-H | Delete character before cursor |
+| Ctrl-K | Delete from cursor to end of line |
+| Ctrl-W | Delete word before cursor (alphanumeric boundaries) |
 | Any printable | Append to query, re-filter |
 
 ## Scrolling

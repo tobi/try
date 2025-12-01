@@ -19,4 +19,4 @@ jobs:
           ruby-version: '3.3'
 
       - name: Run tests
-        run: rake -f tests/Rakefile
+        run: rake
