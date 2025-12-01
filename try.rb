@@ -26,6 +26,8 @@ module UI
     # Screen control
     '{clear_screen}' => "\e[2J", '{clear_line}' => "\e[2K", '{home}' => "\e[H", '{clear_below}' => "\e[0J",
     '{hide_cursor}' => "\e[?25l", '{show_cursor}' => "\e[?25h",
+    # Input cursor
+    '{cursor}' => "\e[7m \e[27m",  # Reverse video space as cursor block
   }.freeze
 
   @@buffer = []
@@ -189,6 +191,7 @@ class TrySelector
     @test_had_keys = test_keys && !test_keys.empty?
     @test_confirm = test_confirm
     @old_winch_handler = nil  # Store original SIGWINCH handler
+    @needs_redraw = false
 
     FileUtils.mkdir_p(@base_path) unless Dir.exist?(@base_path)
   end
@@ -232,8 +235,7 @@ class TrySelector
 
     # Handle terminal resize
     @old_winch_handler = Signal.trap('WINCH') do
-      UI.refresh_size
-      UI.cls
+      @needs_redraw = true
     end
   end
 
@@ -366,10 +368,11 @@ class TrySelector
   def main_loop
     loop do
       tries = get_tries
-      total_items = tries.length + 1  # +1 for "Create new" option
+      show_create_new = !@input_buffer.empty?
+      total_items = tries.length + (show_create_new ? 1 : 0)
 
       # Ensure cursor is within bounds
-      @cursor_pos = [[@cursor_pos, 0].max, total_items - 1].min
+      @cursor_pos = [[@cursor_pos, 0].max, [total_items - 1, 0].max].min
 
       render(tries)
 
@@ -384,7 +387,7 @@ class TrySelector
         elsif @cursor_pos < tries.length
           handle_selection(tries[@cursor_pos])
           break if @selected
-        else
+        elsif show_create_new
           # Selected "Create new"
           handle_create_new
           break if @selected
@@ -439,7 +442,18 @@ class TrySelector
     end
     # In test mode with no more keys, auto-exit by returning ESC
     return "\e" if @test_had_keys && @test_keys && @test_keys.empty?
-    UI.read_key
+
+    # Use IO.select with timeout to allow checking for resize
+    loop do
+      if @needs_redraw
+        @needs_redraw = false
+        UI.refresh_size
+        UI.cls
+        return nil
+      end
+      ready = IO.select([STDIN], nil, nil, 0.1)
+      return UI.read_key if ready
+    end
   end
 
   def render(tries)
@@ -453,13 +467,14 @@ class TrySelector
     UI.puts "{h1}📁 Try Selector{reset}"
     UI.puts "{dim}#{separator}{/fg}"
 
-    # Search input
-    UI.puts "{dim}Search:{/fg} {b}#{@input_buffer}{/b}"
+    # Search input with cursor
+    UI.puts "{dim}Search:{/fg} {b}#{@input_buffer}{/b}{cursor}"
     UI.puts "{dim}#{separator}{/fg}"
 
     # Calculate visible window based on actual terminal height
     max_visible = [term_height - 8, 3].max
-    total_items = tries.length + 1  # +1 for "Create new"
+    show_create_new = !@input_buffer.empty?
+    total_items = tries.length + (show_create_new ? 1 : 0)
 
     # Adjust scroll window
     if @cursor_pos < @scroll_offset
@@ -485,32 +500,52 @@ class TrySelector
       if idx < tries.length
         try_dir = tries[idx]
         is_marked = @marked_for_deletion.include?(try_dir[:path])
+        basename = try_dir[:basename]
+
+        # Calculate metadata
+        time_text = format_relative_time(try_dir[:mtime])
+        score_text = sprintf("%.1f", try_dir[:score])
+        meta_text = "#{time_text}, #{score_text}"
+        meta_width = meta_text.length + 1  # +1 for leading space
+
+        # Layout: "→ 📁 name                    meta" or "  📁 name..."
+        # prefix = 5 chars ("→ 📁 " or "  📁 ")
+        # Metadata is right-aligned. If name overlaps, metadata is hidden.
+        prefix_width = 5
+        meta_start = term_width - meta_width
+        max_name_for_meta = meta_start - prefix_width - 1  # -1 for min gap
+
+        # Max name width before truncation (leave 1 char at end)
+        max_name_width = term_width - prefix_width - 1
 
         # Start strike formatting for marked items
         UI.print "{strike}" if is_marked
 
-        # Render the folder icon (always outside selection)
-        UI.print "📁 "
+        # Render the folder/trash icon
+        UI.print(is_marked ? "🗑️  " : "📁 ")
 
         # Start selection highlighting after icon
         UI.print "{section}" if is_selected
 
         # Format directory name with date styling
-        if try_dir[:basename] =~ /^(\d{4}-\d{2}-\d{2})-(.+)$/
+        if basename =~ /^(\d{4}-\d{2}-\d{2})-(.+)$/
           date_part = $1
           name_part = $2
+          full_name = "#{date_part}-#{name_part}"
+
+          # Truncate only if exceeds terminal width
+          if full_name.length > max_name_width && max_name_width > 14
+            available_for_name = max_name_width - 11 - 1 - 1  # date + dash + ellipsis
+            name_part = name_part[0, available_for_name] + "…" if name_part.length > available_for_name + 1
+            full_name = "#{date_part}-#{name_part}"
+          end
 
           # Render the date part (faint)
           UI.print "{dim}#{date_part}{/fg}"
 
-          # Render the separator (very faint)
+          # Render the separator
           separator_matches = !@input_buffer.empty? && @input_buffer.include?('-')
-          if separator_matches
-            UI.print "{b}-{/b}"
-          else
-            UI.print "{dim}-{/fg}"
-          end
-
+          UI.print(separator_matches ? "{b}-{/b}" : "{dim}-{/fg}")
 
           # Render the name part with match highlighting
           if !@input_buffer.empty?
@@ -519,35 +554,31 @@ class TrySelector
             UI.print name_part
           end
 
-          # Store plain text for width calculation
-          display_text = "#{date_part}-#{name_part}"
+          display_text = full_name
         else
-          # No date prefix - render folder icon then content
-          if !@input_buffer.empty?
-            UI.print highlight_matches_for_selection(try_dir[:basename], @input_buffer, is_selected)
-          else
-            UI.print try_dir[:basename]
+          # No date prefix
+          name = basename
+          if name.length > max_name_width && max_name_width > 2
+            name = name[0, max_name_width - 1] + "…"
           end
-          display_text = try_dir[:basename]
+
+          if !@input_buffer.empty?
+            UI.print highlight_matches_for_selection(name, @input_buffer, is_selected)
+          else
+            UI.print name
+          end
+          display_text = name
         end
 
-        # Format score and time for display (time first, then score)
-        time_text = format_relative_time(try_dir[:mtime])
-        score_text = sprintf("%.1f", try_dir[:score])
-
-        # Combine time and score
-        meta_text = "#{time_text}, #{score_text}"
-
-        # Calculate padding (account for icon being outside selection)
-        meta_width = meta_text.length + 1  # +1 for space before meta
-        text_width = display_text.length  # Plain text width
-        padding_needed = term_width - 5 - text_width - meta_width  # -5 for arrow + icon + space
-        padding = " " * [padding_needed, 1].max
-
-        # Print padding and metadata
-        UI.print padding
         UI.print "{/section}" if is_selected
-        UI.print " {dim}#{meta_text}{/fg}"
+
+        # Show metadata if name doesn't overlap its position
+        if display_text.length <= max_name_for_meta
+          padding_needed = meta_start - prefix_width - display_text.length
+          UI.print " " * padding_needed
+          UI.print "{dim}#{meta_text}{/fg}"
+        end
+
         UI.print "{/strike}" if is_marked
 
       else
@@ -802,7 +833,7 @@ end
 # Main execution with OptionParser subcommands
 if __FILE__ == $0
 
-  VERSION = "1.1.0"
+  VERSION = "1.2.0"
 
   def print_global_help
     text = <<~HELP
@@ -1018,15 +1049,7 @@ if __FILE__ == $0
       exit 1
     end
 
-    full_path = File.join(tries_path, dir_name)
-    [
-      { type: 'target', path: full_path },
-      { type: 'mkdir' },
-      { type: 'echo', msg: "Using {b}git clone{/b} to create this trial from #{git_uri}." },
-      { type: 'git-clone', uri: git_uri },
-      { type: 'touch'},
-      { type: 'cd' }
-    ]
+    script_clone(File.join(tries_path, dir_name), git_uri)
   end
 
   def cmd_init!(args, tries_path)
@@ -1110,24 +1133,14 @@ if __FILE__ == $0
         File.basename(repo_dir)
       end
       date_prefix = Time.now.strftime("%Y-%m-%d")
-      # Prefer bumping numeric suffix if base ends with digits and today's name exists
       base = resolve_unique_name_with_versioning(tries_path, date_prefix, base)
-      dir_name = "#{date_prefix}-#{base}"
-      full_path = File.join(tries_path, dir_name)
-      tasks = [
-        { type: 'target', path: full_path },
-        { type: 'mkdir' }
-      ]
-      # Only add worktree when a .git directory exists at that path
+      full_path = File.join(tries_path, "#{date_prefix}-#{base}")
+      # Use worktree if .git exists, otherwise just mkdir
       if File.directory?(File.join(repo_dir, '.git'))
-        tasks << { type: 'echo', msg: "Using {b}git worktree{/b} to create this trial from #{repo_dir}." }
-        tasks << { type: 'git-worktree', repo: repo_dir }
+        return script_worktree(full_path, repo_dir)
+      else
+        return script_mkdir_cd(full_path)
       end
-      tasks += [
-        { type: 'touch' },
-        { type: 'cd' }
-      ]
-      return tasks
     end
 
     search_term = args.join(' ')
@@ -1141,14 +1154,7 @@ if __FILE__ == $0
         exit 1
       end
       full_path = File.join(tries_path, dir_name)
-      return [
-        { type: 'target', path: full_path },
-        { type: 'mkdir' },
-        { type: 'echo', msg: "Using {b}git clone{/b} to create this trial from #{git_uri}." },
-        { type: 'git-clone', uri: git_uri },
-        { type: 'touch' },
-        { type: 'cd' }
-      ]
+      return script_clone(full_path, git_uri)
     end
 
     # Regular interactive selector
@@ -1164,94 +1170,67 @@ if __FILE__ == $0
     result = selector.run
     return nil unless result
 
-    # Handle delete action - different task flow
-    if result[:type] == :delete
-      return [
-        { type: 'delete', paths: result[:paths], base_path: result[:base_path] }
-      ]
+    case result[:type]
+    when :delete
+      script_delete(result[:paths], result[:base_path])
+    when :mkdir
+      script_mkdir_cd(result[:path])
+    else
+      script_cd(result[:path])
     end
-
-    tasks = [{ type: 'target', path: result[:path] }]
-    tasks += [{ type: 'mkdir' }] if result[:type] == :mkdir
-    tasks += [{ type: 'touch' }, { type: 'cd' }]
-    tasks
   end
 
-  # --- Shell emission helpers (moved out of UI) ---
+  # --- Shell script helpers ---
   SCRIPT_WARNING = "# if you can read this, you didn't launch try from an alias. run try --help."
 
-  def emit_script(parts)
-    puts SCRIPT_WARNING
-    # Format: cmd1 && \
-    #   cmd2 && \
-    #   true
-    parts.each do |part|
-      puts "#{part} && \\"
-    end
-    puts "  true"
+  def q(str)
+    "'" + str.gsub("'", %q('"'"')) + "'"
   end
 
-  # tasks: [{type: 'target', path: '/abs/dir'}, {type: 'mkdir'|'touch'|'cd'|'git-clone'|'git-worktree', ...}]
-  # Special: delete task has its own format without target
-  def emit_tasks_script(tasks)
-    # Handle delete specially - no target, just rm -rf with safety
-    delete_task = tasks.find { |t| t[:type] == 'delete' }
-    if delete_task
-      emit_delete_script(delete_task[:paths], delete_task[:base_path])
-      return
-    end
-
-    target = tasks.find { |t| t[:type] == 'target' }
-    full_path = target && target[:path]
-    raise 'emit_tasks_script requires a target path' unless full_path
-
-    parts = []
-    q = "'" + full_path.gsub("'", %q('"'"'')) + "'"
-    tasks.each do |t|
-      case t[:type]
-      when 'echo'
-        msg = t[:msg] || ''
-        expanded = UI.expand_tokens(msg)
-        m = "'" + expanded.gsub("'", %q('"'"'')) + "'"
-        parts << "echo #{m}"
-      when 'mkdir'
-        parts << "mkdir -p #{q}"
-      when 'git-clone'
-        parts << "git clone '#{t[:uri]}' #{q}"
-      when 'git-worktree'
-        if t[:repo]
-          r = "'" + t[:repo].gsub("'", %q('"'"'')) + "'"
-          parts << "/usr/bin/env sh -c 'if git -C " + r + " rev-parse --is-inside-work-tree >/dev/null 2>&1; then repo=\$(git -C " + r + " rev-parse --show-toplevel); git -C \"$repo\" worktree add --detach #{q} >/dev/null 2>&1 || true; fi; exit 0'"
-        else
-          parts << "/usr/bin/env sh -c 'if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then repo=\$(git rev-parse --show-toplevel); git -C \"$repo\" worktree add --detach #{q} >/dev/null 2>&1 || true; fi; exit 0'"
-        end
-      when 'touch'
-        parts << "touch #{q}"
-      when 'cd'
-        parts << "cd #{q}"
+  def emit_script(cmds)
+    puts SCRIPT_WARNING
+    cmds.each_with_index do |cmd, i|
+      if i == 0
+        print cmd
+      else
+        print "  #{cmd}"
+      end
+      if i < cmds.length - 1
+        puts " && \\"
+      else
+        puts
       end
     end
-    emit_script(parts)
   end
 
-  # Emit safe delete script
-  # paths is an array of {path:, basename:} hashes (already validated to be inside base_path)
-  def emit_delete_script(paths, base_path)
-    q_base = "'" + base_path.gsub("'", %q('"'"')) + "'"
-    orig_pwd = "'" + Dir.pwd.gsub("'", %q('"'"')) + "'"
+  def script_cd(path)
+    ["touch #{q(path)}", "cd #{q(path)}"]
+  end
 
-    puts SCRIPT_WARNING
-    puts "cd #{q_base} && \\"
+  def script_mkdir_cd(path)
+    ["mkdir -p #{q(path)}"] + script_cd(path)
+  end
 
-    # For each path, emit: [[ -d name ]] && rm -rf name
-    paths.each do |item|
-      q_name = "'" + item[:basename].gsub("'", %q('"'"')) + "'"
-      puts "  [[ -d #{q_name} ]] && rm -rf #{q_name} && \\"
+  def script_clone(path, uri)
+    ["mkdir -p #{q(path)}", "echo #{q(UI.expand_tokens("Using {b}git clone{/b} to create this trial from #{uri}."))}", "git clone '#{uri}' #{q(path)}"] + script_cd(path)
+  end
+
+  def script_worktree(path, repo = nil)
+    r = repo ? q(repo) : nil
+    worktree_cmd = if r
+      "/usr/bin/env sh -c 'if git -C #{r} rev-parse --is-inside-work-tree >/dev/null 2>&1; then repo=$(git -C #{r} rev-parse --show-toplevel); git -C \"$repo\" worktree add --detach #{q(path)} >/dev/null 2>&1 || true; fi; exit 0'"
+    else
+      "/usr/bin/env sh -c 'if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then repo=$(git rev-parse --show-toplevel); git -C \"$repo\" worktree add --detach #{q(path)} >/dev/null 2>&1 || true; fi; exit 0'"
     end
+    src = repo || Dir.pwd
+    ["mkdir -p #{q(path)}", "echo #{q(UI.expand_tokens("Using {b}git worktree{/b} to create this trial from #{src}."))}", worktree_cmd] + script_cd(path)
+  end
 
-    # End by trying to cd back to original PWD (or HOME if deleted)
-    puts "  ( cd #{orig_pwd} 2>/dev/null || cd \"$HOME\" ) && \\"
-    puts "  true"
+  def script_delete(paths, base_path)
+    cmds = ["cd #{q(base_path)}"]
+    paths.each { |item| cmds << "[[ -d #{q(item[:basename])} ]] && rm -rf #{q(item[:basename])}" }
+    cmds << "( cd #{q(Dir.pwd)} 2>/dev/null || cd \"$HOME\" )"
+    cmds
   end
 
   # Return a unique directory name under tries_path by appending -2, -3, ... if needed
@@ -1294,96 +1273,54 @@ if __FILE__ == $0
   end
 
 
+  # Helper to generate worktree path from repo
+  def worktree_path(tries_path, repo_dir, custom_name)
+    base = if custom_name && !custom_name.strip.empty?
+      custom_name.gsub(/\s+/, '-')
+    else
+      begin; File.basename(File.realpath(repo_dir)); rescue; File.basename(repo_dir); end
+    end
+    date_prefix = Time.now.strftime("%Y-%m-%d")
+    base = resolve_unique_name_with_versioning(tries_path, date_prefix, base)
+    File.join(tries_path, "#{date_prefix}-#{base}")
+  end
+
   case command
   when nil
     print_global_help
     exit 2
   when 'clone'
-    tasks = cmd_clone!(ARGV, tries_path)
-    emit_tasks_script(tasks)
+    emit_script(cmd_clone!(ARGV, tries_path))
     exit 0
   when 'init'
     cmd_init!(ARGV, tries_path)
     exit 0
   when 'exec'
-    # try exec [query] is equivalent to: try exec cd [query]
-    # try exec clone/worktree/cd also supported
     sub = ARGV.first
     case sub
     when 'clone'
       ARGV.shift
-      tasks = cmd_clone!(ARGV, tries_path)
-      emit_tasks_script(tasks)
+      emit_script(cmd_clone!(ARGV, tries_path))
     when 'worktree'
       ARGV.shift
-      # Delegate to worktree handling below by re-processing
-      sub2 = ARGV.shift
-      case sub2
-      when nil, 'dir'
-        custom = ARGV.join(' ')
-        base = if custom && !custom.strip.empty?
-          custom.gsub(/\s+/, '-')
-        else
-          begin
-            File.basename(File.realpath(Dir.pwd))
-          rescue
-            File.basename(Dir.pwd)
-          end
-        end
-        date_prefix = Time.now.strftime("%Y-%m-%d")
-        base = resolve_unique_name_with_versioning(tries_path, date_prefix, base)
-        dir_name = "#{date_prefix}-#{base}"
-        full_path = File.join(tries_path, dir_name)
-        tasks = [
-          { type: 'target', path: full_path },
-          { type: 'mkdir' }
-        ]
-        if File.directory?(File.join(Dir.pwd, '.git'))
-          tasks << { type: 'echo', msg: "Using {b}git worktree{/b} to create this trial from #{Dir.pwd}." }
-          tasks << { type: 'git-worktree' }
-        end
-        tasks += [ { type: 'touch' }, { type: 'cd' } ]
-        emit_tasks_script(tasks)
-      else
-        repo_dir = File.expand_path(sub2)
-        custom = ARGV.join(' ')
-        base = if custom && !custom.strip.empty?
-          custom.gsub(/\s+/, '-')
-        else
-          begin
-            File.basename(File.realpath(repo_dir))
-          rescue
-            File.basename(repo_dir)
-          end
-        end
-        date_prefix = Time.now.strftime("%Y-%m-%d")
-        base = resolve_unique_name_with_versioning(tries_path, date_prefix, base)
-        dir_name = "#{date_prefix}-#{base}"
-        full_path = File.join(tries_path, dir_name)
-        tasks = [
-          { type: 'target', path: full_path },
-          { type: 'mkdir' }
-        ]
-        tasks << { type: 'echo', msg: "Using {b}git worktree{/b} to create this trial from #{repo_dir}." }
-        tasks << { type: 'git-worktree', repo: repo_dir }
-        tasks += [ { type: 'touch' }, { type: 'cd' } ]
-        emit_tasks_script(tasks)
-      end
+      repo = ARGV.shift
+      repo_dir = repo && repo != 'dir' ? File.expand_path(repo) : Dir.pwd
+      full_path = worktree_path(tries_path, repo_dir, ARGV.join(' '))
+      emit_script(script_worktree(full_path, repo_dir == Dir.pwd ? nil : repo_dir))
     when 'cd'
       ARGV.shift
-      tasks = cmd_cd!(ARGV, tries_path, and_type, and_exit, and_keys, and_confirm)
-      if tasks
-        emit_tasks_script(tasks)
+      script = cmd_cd!(ARGV, tries_path, and_type, and_exit, and_keys, and_confirm)
+      if script
+        emit_script(script)
         exit 0
       else
         puts "Cancelled."
         exit 1
       end
     else
-      # try exec [query] → interactive selector
-      tasks = cmd_cd!(ARGV, tries_path, and_type, and_exit, and_keys, and_confirm)
-      if tasks
-        emit_tasks_script(tasks)
+      script = cmd_cd!(ARGV, tries_path, and_type, and_exit, and_keys, and_confirm)
+      if script
+        emit_script(script)
         exit 0
       else
         puts "Cancelled."
@@ -1391,76 +1328,22 @@ if __FILE__ == $0
       end
     end
   when 'worktree'
-    sub = ARGV.shift
-    case sub
-    when nil, 'dir'
-      # try worktree dir [name]  (or no subcommand -> current directory)
-      custom = ARGV.join(' ')
-      base = if custom && !custom.strip.empty?
-        custom.gsub(/\s+/, '-')
-      else
-        begin
-          File.basename(File.realpath(Dir.pwd))
-        rescue
-          File.basename(Dir.pwd)
-        end
-      end
-      date_prefix = Time.now.strftime("%Y-%m-%d")
-      base = resolve_unique_name_with_versioning(tries_path, date_prefix, base)
-      dir_name = "#{date_prefix}-#{base}"
-      full_path = File.join(tries_path, dir_name)
-      tasks = [
-        { type: 'target', path: full_path },
-        { type: 'mkdir' }
-      ]
-      if File.directory?(File.join(Dir.pwd, '.git'))
-        tasks << { type: 'echo', msg: "Using {b}git worktree{/b} to create this trial from #{Dir.pwd}." }
-        tasks << { type: 'git-worktree' }
-      end
-      tasks += [ { type: 'touch' }, { type: 'cd' } ]
-      emit_tasks_script(tasks)
-      exit 0
-    else
-      # try worktree <repo-path> [name]
-      repo_dir = File.expand_path(sub)
-      custom = ARGV.join(' ')
-      base = if custom && !custom.strip.empty?
-        custom.gsub(/\s+/, '-')
-      else
-        begin
-          File.basename(File.realpath(repo_dir))
-        rescue
-          File.basename(repo_dir)
-        end
-      end
-      date_prefix = Time.now.strftime("%Y-%m-%d")
-      base = resolve_unique_name_with_versioning(tries_path, date_prefix, base)
-      dir_name = "#{date_prefix}-#{base}"
-      full_path = File.join(tries_path, dir_name)
-      tasks = [
-        { type: 'target', path: full_path },
-        { type: 'mkdir' }
-      ]
-      # We'll ask emit_tasks_script to add a worktree from the given repo path
-      tasks << { type: 'echo', msg: "Using {b}git worktree{/b} to create this trial from #{repo_dir}." }
-      tasks << { type: 'git-worktree', repo: repo_dir }
-      tasks += [ { type: 'touch' }, { type: 'cd' } ]
-      emit_tasks_script(tasks)
-      exit 0
-    end
-  when 'cd'
-    tasks = cmd_cd!(ARGV, tries_path, and_type, and_exit, and_keys, and_confirm)
-    if tasks
-      emit_tasks_script(tasks)
+    repo = ARGV.shift
+    repo_dir = repo && repo != 'dir' ? File.expand_path(repo) : Dir.pwd
+    full_path = worktree_path(tries_path, repo_dir, ARGV.join(' '))
+    # Explicit worktree command always emits worktree script
+    emit_script(script_worktree(full_path, repo_dir == Dir.pwd ? nil : repo_dir))
+    exit 0
+  else
+    # Default: try [query] - same as try exec [query]
+    script = cmd_cd!(ARGV.unshift(command), tries_path, and_type, and_exit, and_keys, and_confirm)
+    if script
+      emit_script(script)
       exit 0
     else
       puts "Cancelled."
       exit 1
     end
-  else
-    warn "Unknown command: #{command}"
-    print_global_help
-    exit 2
   end
 
 end
