@@ -25,3 +25,11 @@ if echo "$output" | grep -q "function try"; then
 else
     fail "init with fish should emit fish function" "function try" "$output" "init_spec.md"
 fi
+
+# Test: init output contains the real, full path to try binary
+output=$(SHELL=/bin/bash try_run init "$TEST_TRIES" 2>&1)
+if echo "$output" | grep -qF "$TRY_BIN_PATH"; then
+    pass
+else
+    fail "init should contain real, full path to try binary" "$TRY_BIN_PATH" "$output" "init_spec.md"
+fi

@@ -37,12 +37,22 @@
 - Directory names: `YYYY-MM-DD-name` (auto-generated); keep lowercase/kebab-case.
 - Nix: keep `packages.default` minimal; avoid extra build inputs.
 
+## Spec System
+- `spec/`: Contains markdown specifications and automated tests.
+- `spec/*.md`: Human-readable specs defining expected behavior (e.g., `init_spec.md`, `tui_spec.md`, `fuzzy_matching.md`).
+- `spec/tests/`: Shell-based test suite that validates implementations against specs.
+- `spec/tests/runner.sh`: Test runner that executes all `test_*.sh` files against any `try` binary.
+- Run tests: `./spec/tests/runner.sh /path/to/try` (supports wrappers like valgrind).
+
+**Important**: Specs must reflect the full feature set of `try`. They serve as the canonical reference for behavior, enabling new implementations (in any language) to be validated against the same test suite. When adding or changing features, update both the relevant spec markdown and add corresponding tests.
+
 ## Testing Guidelines
-- No framework is configured; use manual flows:
+- Primary testing is via the spec system: `./spec/tests/runner.sh ./try.rb`
+- Manual flows for exploratory testing:
   - `TRY_PATH=$(mktemp -d) ./try.rb cd` then create/select directories.
   - Validate delete confirmation and scoring by changing `mtime`/`ctime`.
   - Test clone paths: `./try.rb clone https://github.com/user/repo.git`.
-- If adding logic, consider lightweight unit tests or scriptable checks; keep them optional and self-contained.
+- If adding logic, add tests to the spec system under `spec/tests/`.
 - Prefer testing the printed shell via regex matches. When adding tokens, add simple tests to validate token expansion and non-TTY flush behavior.
 
 ## Commit & Pull Request Guidelines

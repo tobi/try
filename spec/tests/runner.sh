@@ -46,6 +46,7 @@ fi
 
 # Export for test scripts
 export TRY_CMD
+export TRY_BIN_PATH
 export SPEC_DIR
 
 # Helper function to run try with proper command expansion
