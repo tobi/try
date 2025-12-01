@@ -11,11 +11,11 @@ else
     fail "init should emit bash function" "try() {" "$output" "init_spec.md"
 fi
 
-# Test: bash function includes --path argument
-if echo "$output" | grep -q -- "--path"; then
+# Test: bash function includes --path argument with the specified path
+if echo "$output" | grep -qF -- "--path '$TEST_TRIES'"; then
     pass
 else
-    fail "bash function should include --path" "--path" "$output" "init_spec.md"
+    fail "bash function should include --path with specified path" "--path '$TEST_TRIES'" "$output" "init_spec.md"
 fi
 
 # Test: init with fish shell emits fish function
