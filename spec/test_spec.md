@@ -248,6 +248,25 @@ output=$(try_run --and-exit exec)  # output will be empty!
 output=$(try_run --and-exit exec 2>&1)  # Redirect stderr to capture TUI
 ```
 
+## Environment Variables
+
+Implementations must support these environment variables for testing:
+
+| Variable | Description |
+|----------|-------------|
+| `TRY_WIDTH` | Override terminal width (columns) |
+| `TRY_HEIGHT` | Override terminal height (rows) |
+
+These allow testing layout and truncation behavior without needing an actual terminal of that size:
+
+```bash
+# Test with 400-character wide terminal
+TRY_WIDTH=400 ./try --path="$TEST_TRIES" --and-exit exec 2>&1
+
+# Test narrow terminal
+TRY_WIDTH=40 TRY_HEIGHT=10 ./try --and-exit exec 2>&1
+```
+
 ## Test Environment
 
 The runner creates a test environment with sample directories:

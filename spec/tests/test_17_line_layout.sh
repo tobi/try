@@ -134,3 +134,12 @@ if [ "$dir_count" -ge 4 ]; then
 else
     fail "empty filter should show all directories" "at least 4 directories" "found $dir_count" "tui_spec.md#display-layout"
 fi
+
+# Test: Very wide terminal (400 chars) doesn't cause buffer overflow
+# This tests that the implementation handles extremely wide terminals safely
+output=$(TRY_WIDTH=400 try_run --path="$TEST_TRIES" --and-exit exec 2>&1)
+if echo "$output" | strip_ansi | grep -qE "(alpha|beta|gamma)"; then
+    pass
+else
+    fail "wide terminal should display correctly" "directory names visible" "$output" "tui_spec.md#line-layout"
+fi
