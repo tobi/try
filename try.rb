@@ -1114,50 +1114,26 @@ if __FILE__ == $0
       tries_path = File.expand_path(args.shift)
     end
 
-    path_arg = tries_path ? " --path \"#{tries_path}\"" : ""
+    path_arg = tries_path ? " --path '#{tries_path}'" : ""
     bash_or_zsh_script = <<~SHELL
       try() {
-        script_path='#{script_path}'
-        # Check if first argument is a known command
-        case "$1" in
-          clone|worktree|init)
-            cmd=$(/usr/bin/env ruby "$script_path"#{path_arg} "$@" 2>/dev/tty)
-            ;;
-          *)
-            cmd=$(/usr/bin/env ruby "$script_path" cd#{path_arg} "$@" 2>/dev/tty)
-            ;;
-        esac
-        rc=$?
-        if [ $rc -eq 0 ]; then
-          case "$cmd" in
-            *" && "*) eval "$cmd" ;;
-            *) printf %s "$cmd" ;;
-          esac
+        local out
+        out=$(/usr/bin/env ruby '#{script_path}' exec#{path_arg} "$@" 2>/dev/tty)
+        if [ $? -eq 0 ]; then
+          eval "$out"
         else
-          printf %s "$cmd"
+          echo "$out"
         fi
       }
     SHELL
 
     fish_script = <<~SHELL
       function try
-        set -l script_path "#{script_path}"
-        # Check if first argument is a known command
-        switch $argv[1]
-          case clone worktree init
-            set -f cmd (/usr/bin/env ruby "$script_path"#{path_arg} $argv 2>/dev/tty | string collect)
-          case '*'
-            set -f cmd (/usr/bin/env ruby "$script_path" cd#{path_arg} $argv 2>/dev/tty | string collect)
-        end
-        set -l rc $status
-        if test $rc -eq 0
-          if string match -r ' && ' -- $cmd
-            eval $cmd
-          else
-            printf %s $cmd
-          end
+        set -l out (/usr/bin/env ruby '#{script_path}' exec#{path_arg} $argv 2>/dev/tty | string collect)
+        if test $status -eq 0
+          eval $out
         else
-          printf %s $cmd
+          echo $out
         end
       end
     SHELL
