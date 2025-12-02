@@ -79,10 +79,11 @@ mkdir -p "$TEST_TRIES/2025-11-25-project-with-long-name"
 mkdir -p "$TEST_TRIES/no-date-prefix"
 
 # Set mtimes (oldest first)
-touch -d "2025-11-01" "$TEST_TRIES/2025-11-01-alpha"
-touch -d "2025-11-15" "$TEST_TRIES/2025-11-15-beta"
-touch -d "2025-11-20" "$TEST_TRIES/2025-11-20-gamma"
-touch -d "2025-11-25" "$TEST_TRIES/2025-11-25-project-with-long-name"
+# Use -t format (YYYYMMDDhhmm) which works on both macOS and Linux
+touch -t 202511010000 "$TEST_TRIES/2025-11-01-alpha"
+touch -t 202511150000 "$TEST_TRIES/2025-11-15-beta"
+touch -t 202511200000 "$TEST_TRIES/2025-11-20-gamma"
+touch -t 202511250000 "$TEST_TRIES/2025-11-25-project-with-long-name"
 touch "$TEST_TRIES/no-date-prefix"  # Most recent
 
 # Counters
