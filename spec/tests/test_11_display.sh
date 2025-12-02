@@ -60,23 +60,23 @@ fi
 # Note: cursor control sequences ([?25l, [H, [K, [J) are still emitted
 output_colors=$(try_run --path="$TEST_TRIES" --and-exit exec 2>&1)
 output_no_colors=$(try_run --no-colors --path="$TEST_TRIES" --and-exit exec 2>&1)
-# With colors should have style codes like [1m (bold), [33m (yellow), [90m (gray), [0m (reset)
-# Check for [90m which is dim gray - used extensively in the TUI
-colors_has_styles=$(echo "$output_colors" | grep -c $'\x1b\[90m' || true)
-no_colors_has_styles=$(echo "$output_no_colors" | grep -c $'\x1b\[90m' || true)
+# With colors should have style codes like [1m (bold), [38;5;Nm (256-color), [0m (reset)
+# Check for [1m (bold) which is used extensively in headings and highlights
+colors_has_styles=$(echo "$output_colors" | grep -c $'\x1b\[1m' || true)
+no_colors_has_styles=$(echo "$output_no_colors" | grep -c $'\x1b\[1m' || true)
 if [ "$colors_has_styles" -gt 0 ] && [ "$no_colors_has_styles" -eq 0 ]; then
     pass
 else
-    fail "--no-colors should remove style codes" "no [90m sequences" "with colors: $colors_has_styles, without: $no_colors_has_styles" "command_line.md#global-options"
+    fail "--no-colors should remove style codes" "no [1m sequences" "with colors: $colors_has_styles, without: $no_colors_has_styles" "command_line.md#global-options"
 fi
 
 # Test: NO_COLOR environment variable disables colors
 output_env=$( NO_COLOR=1 try_run --path="$TEST_TRIES" --and-exit exec 2>&1)
-env_has_styles=$(echo "$output_env" | grep -c $'\x1b\[90m' || true)
+env_has_styles=$(echo "$output_env" | grep -c $'\x1b\[1m' || true)
 if [ "$env_has_styles" -eq 0 ]; then
     pass
 else
-    fail "NO_COLOR env should disable colors" "no [90m sequences" "found $env_has_styles" "command_line.md#environment"
+    fail "NO_COLOR env should disable colors" "no [1m sequences" "found $env_has_styles" "command_line.md#environment"
 fi
 
 # Test: Long directory names show partial metadata right-aligned
