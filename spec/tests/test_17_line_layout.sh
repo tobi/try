@@ -18,14 +18,15 @@ else
     fail "short names should show full metadata" "timestamp, score (e.g., 'just now, 3.0')" "$output" "tui_spec.md#metadata-positioning"
 fi
 
-# Test: Metadata appears at end of line (right-aligned)
-# The score should be near the end of the line, not immediately after the name
+# Test: Metadata appears on line with short names (right-aligned via cursor positioning)
+# The score should appear on the same line as the name
 output=$(try_run --path="$TEST_TRIES" --and-exit exec 2>&1)
-# Find a line with alpha (short name) and check that there's spacing before metadata
-if echo "$output" | strip_ansi | grep "alpha" | grep -qE "alpha[[:space:]]{5,}"; then
+# Find a line with alpha (short name) and check that metadata is present
+# With rwrite, metadata is written first at right edge, then main content overwrites from left
+if echo "$output" | strip_ansi | grep "alpha" | grep -qE "[0-9]+\.[0-9]"; then
     pass
 else
-    fail "metadata should be right-aligned with padding" "multiple spaces before metadata" "$output" "tui_spec.md#line-layout-examples"
+    fail "metadata should appear on same line as short names" "score on line with alpha" "$output" "tui_spec.md#line-layout-examples"
 fi
 
 # Test: Very long directory name gets truncated with ellipsis

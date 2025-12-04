@@ -79,22 +79,24 @@ else
     fail "NO_COLOR env should disable colors" "no [1m sequences" "found $env_has_styles" "command_line.md#environment"
 fi
 
-# Test: Long directory names show partial metadata right-aligned
+# Test: Long directory names show metadata on same line
 # Create a test dir with a very long name
 LONG_DIR="$TEST_TRIES/2025-11-30-this-is-a-very-long-directory-name-for-testing"
 mkdir -p "$LONG_DIR"
 touch "$LONG_DIR"
 output=$(try_run --path="$TEST_TRIES" --and-exit exec 2>&1)
-# The metadata (e.g., "ago, 0.") should appear even for long names
-# Check that we see partial score at end (like ", 0." or "go, 0")
-if echo "$output" | grep -qE "long-directory.*[0-9]\.[0-9]"; then
-    pass
-else
-    # At minimum, some metadata fragment should be visible
-    if echo "$output" | grep -qE "long-directory.*(ago|[0-9]\.)"; then
+# With rwrite, metadata is written first then main content overwrites from left
+# The line should contain both the directory name fragment AND metadata
+# (in byte order: metadata comes first, then name after \r)
+line=$(echo "$output" | grep "long-directory")
+if [ -n "$line" ]; then
+    # Check that metadata appears somewhere on this line
+    if echo "$line" | grep -qE "[0-9]+\.[0-9]"; then
         pass
     else
-        fail "long names should show partial metadata" "partial metadata fragment" "$output" "tui_spec.md#metadata-display"
+        fail "long names should show metadata" "metadata on same line" "$output" "tui_spec.md#metadata-display"
     fi
+else
+    fail "long names should be visible" "line with long-directory" "$output" "tui_spec.md#metadata-display"
 fi
 rm -rf "$LONG_DIR"
