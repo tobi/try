@@ -50,7 +50,7 @@ MARKED_DIR="$TEST_TRIES/2025-11-30-mark-test"
 mkdir -p "$MARKED_DIR"
 touch "$MARKED_DIR"
 # Send 'd' to mark, then immediately exit
-output=$(try_run --path="$TEST_TRIES" --and-exit --and-keys="d" exec 2>&1)
+output=$(try_run --path="$TEST_TRIES" --and-exit --and-keys="d,CTRL-D" exec 2>&1)
 # Should see trash icon and danger background
 if echo "$output" | grep -q "🗑️"; then
     # Danger style uses [48;5;52m (dark red background)

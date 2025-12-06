@@ -49,6 +49,10 @@ export TRY_CMD
 export TRY_BIN_PATH
 export SPEC_DIR
 
+# Set invariant terminal size for tests (can be overridden by specific tests)
+export TRY_WIDTH=80
+export TRY_HEIGHT=24
+
 # Helper function to run try with proper command expansion
 # Usage: try_run [args...]
 # This allows TRY_CMD to be "valgrind ./dist/try" and still work

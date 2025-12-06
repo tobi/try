@@ -17,7 +17,7 @@ has_highlight() {
 output=$(try_run --path="$TEST_TRIES" --and-exit --and-keys="alp" exec 2>&1)
 # The matched characters should have some highlighting
 # Check for any styling change within the alpha line
-alpha_line=$(echo "$output" | grep -i "alpha")
+alpha_line=$(echo "$output" | strip_ansi | grep -i "alpha")
 if [ -n "$alpha_line" ]; then
     pass  # Match found
 else
