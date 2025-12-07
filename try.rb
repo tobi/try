@@ -385,6 +385,9 @@ class TrySelector
       key = read_key
 
       case key
+      when nil
+        # Terminal was resized - UI.cls already called in read_key, buffers cleared
+        # Loop continues to next iteration where render() will use new dimensions
       when "\r"  # Enter (carriage return)
         if @delete_mode && !@marked_for_deletion.empty?
           # Confirm deletion of marked items
