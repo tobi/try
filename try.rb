@@ -1118,7 +1118,7 @@ if __FILE__ == $0
     bash_or_zsh_script = <<~SHELL
       try() {
         local out
-        out=$(/usr/bin/env ruby '#{script_path}' exec#{path_arg} "$@" 2>/dev/tty)
+        out=$('#{script_path}' exec#{path_arg} "$@" 2>/dev/tty)
         if [ $? -eq 0 ]; then
           eval "$out"
         else
@@ -1129,7 +1129,7 @@ if __FILE__ == $0
 
     fish_script = <<~SHELL
       function try
-        set -l out (/usr/bin/env ruby '#{script_path}' exec#{path_arg} $argv 2>/dev/tty | string collect)
+        set -l out ('#{script_path}' exec#{path_arg} $argv 2>/dev/tty | string collect)
         if test $status -eq 0
           eval $out
         else
