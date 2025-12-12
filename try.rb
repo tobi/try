@@ -178,6 +178,16 @@ end
 class TrySelector
   TRY_PATH = ENV['TRY_PATH'] || File.expand_path("~/src/tries")
 
+  def gh_path_enabled?
+    env_val = ENV['GH_PATH']
+    env_val && !env_val.strip.empty?
+  end
+
+  def gh_path_root
+    return nil unless gh_path_enabled?
+    File.expand_path(ENV['GH_PATH'])
+  end
+
   def initialize(search_term = "", base_path: TRY_PATH, initial_input: nil, test_render_once: false, test_no_cls: false, test_keys: nil, test_confirm: nil)
     @search_term = search_term.gsub(/\s+/, '-')
     @cursor_pos = 0  # Navigation cursor (list position)
@@ -198,6 +208,7 @@ class TrySelector
     @test_confirm = test_confirm
     @old_winch_handler = nil  # Store original SIGWINCH handler
     @needs_redraw = false
+    @source = :all  # :all, :tries, or :github (when GH_PATH enabled)
 
     FileUtils.mkdir_p(@base_path) unless Dir.exist?(@base_path)
   end
@@ -257,28 +268,72 @@ class TrySelector
 
   def load_all_tries
     # Load trials only once - single pass through directory
+    # Clear cache when source changes
+    @all_tries = nil if @source_changed
+    @source_changed = false
+    
     @all_tries ||= begin
       tries = []
-      Dir.foreach(@base_path) do |entry|
-        # exclude . and .. but also .git, and any other hidden dirs.
-        next if entry.start_with?('.')
+      
+      # Load tries source (if not filtering to github only)
+      if @source != :github || !gh_path_enabled?
+        Dir.foreach(@base_path) do |entry|
+          # exclude . and .. but also .git, and any other hidden dirs.
+          next if entry.start_with?('.')
 
-        path = File.join(@base_path, entry)
-        stat = File.stat(path)
+          path = File.join(@base_path, entry)
+          stat = File.stat(path)
 
-        # Only include directories
-        next unless stat.directory?
+          # Only include directories
+          next unless stat.directory?
 
-        tries << {
-          name: "📁 #{entry}",
-          basename: entry,
-          basename_down: entry.downcase, 
-          path: path,
-          is_new: false,
-          ctime: stat.ctime,
-          mtime: stat.mtime
-        }
+          tries << {
+            name: "📁 #{entry}",
+            basename: entry,
+            basename_down: entry.downcase, 
+            path: path,
+            is_new: false,
+            ctime: stat.ctime,
+            mtime: stat.mtime,
+            source: :tries
+          }
+        end
       end
+      
+      # Load GitHub source (if GH_PATH is set and not filtering to tries only)
+      if gh_path_enabled? && @source != :tries
+        gh_root = gh_path_root
+        if gh_root && Dir.exist?(gh_root)
+          Dir.foreach(gh_root) do |owner|
+            next if owner.start_with?('.')
+            
+            owner_path = File.join(gh_root, owner)
+            next unless File.directory?(owner_path)
+            
+            Dir.foreach(owner_path) do |repo|
+              next if repo.start_with?('.')
+              
+              repo_path = File.join(owner_path, repo)
+              next unless File.directory?(repo_path)
+              
+              stat = File.stat(repo_path)
+              display_name = "#{owner}/#{repo}"
+              
+              tries << {
+                name: "📁 #{display_name}",
+                basename: display_name,
+                basename_down: display_name.downcase,
+                path: repo_path,
+                is_new: false,
+                ctime: stat.ctime,
+                mtime: stat.mtime,
+                source: :github
+              }
+            end
+          end
+        end
+      end
+      
       tries
     end
   end
@@ -374,7 +429,8 @@ class TrySelector
   def main_loop
     loop do
       tries = get_tries
-      show_create_new = !@input_buffer.empty?
+      # Disable "Create new" when filtering to GitHub only
+      show_create_new = !@input_buffer.empty? && @source != :github
       total_items = tries.length + (show_create_new ? 1 : 0)
 
       # Ensure cursor is within bounds
@@ -448,6 +504,20 @@ class TrySelector
           @input_buffer = @input_buffer[0...new_pos] + @input_buffer[@input_cursor_pos..-1]
           @input_cursor_pos = new_pos
         end
+      when "\x07"  # Ctrl-G - cycle filter (all ↔ tries only ↔ github only)
+        if gh_path_enabled?
+          # Cycle through: :all -> :tries -> :github -> :all
+          @source = case @source
+          when :all then :tries
+          when :tries then :github
+          when :github then :all
+          else :all  # default to :all
+          end
+          @source_changed = true
+          @all_tries = nil  # Clear cache
+          @cursor_pos = 0  # Reset cursor
+          @scroll_offset = 0  # Reset scroll
+        end
       when "\x04"  # Ctrl-D - toggle mark for deletion
         if @cursor_pos < tries.length
           path = tries[@cursor_pos][:path]
@@ -510,7 +580,16 @@ class TrySelector
     separator = "─" * (term_width - 1)
 
     # Header
-    UI.puts "{h1}📁 Try Selector{reset}"
+    source_indicator = if gh_path_enabled?
+      case @source
+      when :github then " {dim}(GitHub only){/fg}"
+      when :tries then " {dim}(Tries only){/fg}"
+      else " {dim}(Tries + GitHub){/fg}"
+      end
+    else
+      " {dim}(Tries){/fg}"
+    end
+    UI.puts "{h1}📁 Try Selector#{source_indicator}{reset}"
     UI.puts "{dim}#{separator}{/fg}"
 
     # Search input with cursor at correct position
@@ -700,50 +779,6 @@ class TrySelector
     end
   end
 
-  def truncate_with_ansi(text, max_length)
-    # Simple truncation that preserves ANSI codes
-    visible_count = 0
-    result = ""
-    in_ansi = false
-
-    text.chars.each do |char|
-      if char == "\e"
-        in_ansi = true
-        result += char
-      elsif in_ansi
-        result += char
-        in_ansi = false if char == "m"
-      else
-        break if visible_count >= max_length
-        result += char
-        visible_count += 1
-      end
-    end
-
-    result
-  end
-
-  def highlight_matches(text, query)
-    return text if query.empty?
-
-    result = ""
-    text_lower = text.downcase
-    query_lower = query.downcase
-    query_chars = query_lower.chars
-    query_index = 0
-
-    text.chars.each_with_index do |char, i|
-      if query_index < query_chars.length && text_lower[i] == query_chars[query_index]
-        result += "{b}#{char}{/b}"  # Bold yellow for matches
-        query_index += 1
-      else
-        result += char
-      end
-    end
-
-    result
-  end
-
   def highlight_matches_for_selection(text, query, is_selected)
     return text if query.empty?
 
@@ -781,8 +816,6 @@ class TrySelector
       @selected = { type: :mkdir, path: full_path }
     else
       # No name typed, prompt for one
-      suggested_name = ""
-
       UI.cls  # Clear screen using UI system
       UI.puts "{h2}Enter new try name"
       UI.puts
@@ -798,7 +831,7 @@ class TrySelector
       end
 
       if entry.empty?
-        return { type: :cancel, path: nil  }
+        return
       end
 
       final_name = "#{date_prefix}-#{entry}".gsub(/\s+/, '-')
@@ -998,6 +1031,16 @@ if __FILE__ == $0
     end
   end
 
+  def gh_path_enabled?
+    env_val = ENV['GH_PATH']
+    env_val && !env_val.strip.empty?
+  end
+
+  def gh_path_root
+    return nil unless gh_path_enabled?
+    File.expand_path(ENV['GH_PATH'])
+  end
+
   def generate_clone_directory_name(git_uri, custom_name = nil)
     return custom_name if custom_name && !custom_name.empty?
 
@@ -1006,6 +1049,23 @@ if __FILE__ == $0
 
     date_prefix = Time.now.strftime("%Y-%m-%d")
     "#{date_prefix}-#{parsed[:user]}-#{parsed[:repo]}"
+  end
+
+  def resolve_clone_destination(git_uri, custom_name, tries_path)
+    parsed = parse_git_uri(git_uri)
+    return nil unless parsed
+
+    # If GH_PATH is set and this is a github.com URL, use GH_PATH structure
+    if gh_path_enabled? && parsed[:host] == 'github.com'
+      gh_root = gh_path_root
+      owner = parsed[:user]
+      repo_name = custom_name && !custom_name.strip.empty? ? custom_name : parsed[:repo]
+      File.join(gh_root, owner, repo_name)
+    else
+      # Default behavior: date-prefixed directory under tries_path
+      dir_name = generate_clone_directory_name(git_uri, custom_name)
+      dir_name ? File.join(tries_path, dir_name) : nil
+    end
   end
 
   def is_git_uri?(arg)
@@ -1058,6 +1118,7 @@ if __FILE__ == $0
         when 'CTRL-E', 'CTRLE' then keys << "\x05"
         when 'CTRL-F', 'CTRLF' then keys << "\x06"
         when 'CTRL-H', 'CTRLH' then keys << "\x08"
+        when 'CTRL-G', 'CTRLG' then keys << "\x07"
         when 'CTRL-K', 'CTRLK' then keys << "\x0B"
         when 'CTRL-N', 'CTRLN' then keys << "\x0E"
         when 'CTRL-P', 'CTRLP' then keys << "\x10"
@@ -1098,13 +1159,13 @@ if __FILE__ == $0
       exit 1
     end
 
-    dir_name = generate_clone_directory_name(git_uri, custom_name)
-    unless dir_name
+    full_path = resolve_clone_destination(git_uri, custom_name, tries_path)
+    unless full_path
       warn "Error: Unable to parse git URI: #{git_uri}"
       exit 1
     end
 
-    script_clone(File.join(tries_path, dir_name), git_uri)
+    script_clone(full_path, git_uri)
   end
 
   def cmd_init!(args, tries_path)
@@ -1179,12 +1240,11 @@ if __FILE__ == $0
     # Git URL shorthand → clone workflow
     if is_git_uri?(search_term.split.first)
       git_uri, custom_name = search_term.split(/\s+/, 2)
-      dir_name = generate_clone_directory_name(git_uri, custom_name)
-      unless dir_name
+      full_path = resolve_clone_destination(git_uri, custom_name, tries_path)
+      unless full_path
         warn "Error: Unable to parse git URI: #{git_uri}"
         exit 1
       end
-      full_path = File.join(tries_path, dir_name)
       return script_clone(full_path, git_uri)
     end
 
@@ -1243,7 +1303,16 @@ if __FILE__ == $0
   end
 
   def script_clone(path, uri)
-    ["mkdir -p #{q(path)}", "echo #{q(UI.expand_tokens("Using {b}git clone{/b} to create this trial from #{uri}."))}", "git clone '#{uri}' #{q(path)}"] + script_cd(path)
+    parsed = parse_git_uri(uri)
+    # If GH_PATH is enabled and this is a github.com URL, use conditional clone
+    if gh_path_enabled? && parsed && parsed[:host] == 'github.com'
+      # Check if repo already exists, clone only if needed
+      git_path = File.join(path, '.git')
+      ["mkdir -p #{q(path)}", "echo #{q(UI.expand_tokens("Using {b}git clone{/b} to create this trial from #{uri}."))}", "[ -d #{q(git_path)} ] || git clone '#{uri}' #{q(path)}"] + script_cd(path)
+    else
+      # Default behavior: always clone
+      ["mkdir -p #{q(path)}", "echo #{q(UI.expand_tokens("Using {b}git clone{/b} to create this trial from #{uri}."))}", "git clone '#{uri}' #{q(path)}"] + script_cd(path)
+    end
   end
 
   def script_worktree(path, repo = nil)
