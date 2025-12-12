@@ -212,6 +212,7 @@ Tokens are preserved intact - never split a `{b}...{/b}` pair.
 | Enter | Select current entry |
 | Esc / Ctrl-C | Cancel selection |
 | Ctrl-D | Delete selected directory |
+| Ctrl-G | Toggle source between tries and GitHub (only when `GH_PATH` is set) |
 
 ### Line Editing (in search input)
 | Key | Action |
@@ -249,6 +250,22 @@ When query doesn't match any existing directory:
 - Show "[new] query-text" as first option
 - Selecting creates `YYYY-MM-DD-query-text` directory
 - New directory is created in tries base path
+- **Note**: "Create new" is disabled when viewing GitHub source (Ctrl-G)
+
+## Source Switching
+
+When `GH_PATH` environment variable is set, the TUI supports switching between two sources:
+
+- **Tries source** (default): Lists immediate subdirectories under the tries path
+- **GitHub source**: Lists repositories under `$GH_PATH/<owner>/<repo>` (2-level traversal)
+
+**Behavior:**
+- Press `Ctrl-G` to toggle between sources
+- When switching sources, the list cache is cleared, cursor resets to top, and scroll resets
+- In GitHub source mode:
+  - Entries are displayed as `owner/repo` (e.g., `toby/try`)
+  - "Create new" option is disabled
+  - Navigation and selection work the same as in tries source
 
 ## Directory Deletion
 
