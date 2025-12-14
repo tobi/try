@@ -1300,7 +1300,10 @@ if __FILE__ == $0
 
   # shell detection for init wrapper
   def fish?
-    ENV['SHELL']&.include?('fish')
+    parent_shell = `ps c -p #{Process.ppid} -o 'ucomm='`.strip rescue nil
+    parent_shell = ENV["SHELL"] if parent_shell.to_s.empty?
+
+    parent_shell&.include?('fish')
   end
 
 
