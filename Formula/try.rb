@@ -1,8 +1,8 @@
 class Try < Formula
   desc "Fresh directories for every vibe - lightweight experiments for people with ADHD"
   homepage "https://github.com/tobi/try"
-  url "https://github.com/tobi/try/archive/refs/heads/main.tar.gz"
-  sha256 "151778fdd07adac23fb021d2d84bd0756e0d626a97498503da24413bfdd72c28"
+  url "https://github.com/tobi/try/archive/08f70fa34761e308acc0546b723d038e41aa0fee.tar.gz"
+  sha256 "818b3c7f37410fe1bb719f5ae75d57a59808eef0e9ec36009a01e08ebfa3d558"
   version "main"
 
   depends_on "ruby"
