@@ -18,13 +18,15 @@ module UI
     '{h1}' => "\e[1;38;5;208m",    # Bold + Orange (primary headings)
     '{h2}' => "\e[1;34m",          # Bold + Blue (secondary headings)
     # Selection
-    '{section}' => "\e[1m",        # Bold - start of selected/highlighted section
+    '{section}' => "\e[1m\e[38;5;255m\e[48;5;237m",  # Highlight selection with background
     '{/section}' => "\e[0m",       # Full reset - end of selected section
     # Strikethrough (for deleted items)
     '{strike}' => "\e[48;5;52m",   # Dark red background
     '{/strike}' => "\e[49m",       # Reset background
+    '{error}' => "\e[1;31m", '{/error}' => "\e[22m\e[39m",
+    '{success}' => "\e[1;32m", '{/success}' => "\e[22m\e[39m",
     # Screen control
-    '{clear_screen}' => "\e[2J", '{clear_line}' => "\e[2K", '{home}' => "\e[H", '{clear_below}' => "\e[0J",
+    '{clear_screen}' => "\e[H\e[J", '{clear_line}' => "\e[2K", '{home}' => "\e[H", '{clear_below}' => "\e[0J",
     '{hide_cursor}' => "\e[?25l", '{show_cursor}' => "\e[?25h",
     # Input cursor
     '{cursor}' => "\e[7m \e[27m",  # Reverse video space as cursor block
@@ -108,7 +110,7 @@ module UI
     @@current_line = ""
     @@buffer.clear
     @@last_buffer.clear
-    io.print("\e[2J\e[H")  # Clear screen and go home
+    io.print("\e[H\e[J")  # Clear screen and go home
   end
 
   def self.hide_cursor
@@ -178,7 +180,7 @@ end
 class TrySelector
   TRY_PATH = ENV['TRY_PATH'] || File.expand_path("~/src/tries")
 
-  def initialize(search_term = "", base_path: TRY_PATH, initial_input: nil, test_render_once: false, test_no_cls: false, test_keys: nil, test_confirm: nil)
+  def initialize(search_term = "", base_path: TRY_PATH, initial_input: nil, test_render_once: false, test_keys: nil, test_confirm: nil)
     @search_term = search_term.gsub(/\s+/, '-')
     @cursor_pos = 0  # Navigation cursor (list position)
     @input_cursor_pos = 0  # Text cursor (position within search buffer)
@@ -188,16 +190,21 @@ class TrySelector
     @selected = nil
     @all_trials = nil  # Memoized trials
     @base_path = base_path
-    @delete_status = nil  # Status message for deletions
+    @status_message = nil  # General status message for footer/dialogs
     @delete_mode = false  # Whether we're in deletion mode
     @marked_for_deletion = []  # Paths marked for deletion
     @test_render_once = test_render_once
-    @test_no_cls = test_no_cls
     @test_keys = test_keys
     @test_had_keys = test_keys && !test_keys.empty?
     @test_confirm = test_confirm
     @old_winch_handler = nil  # Store original SIGWINCH handler
     @needs_redraw = false
+    @rename_mode = false
+    @rename_buffer = ""
+    @rename_cursor = 0
+    @rename_entry = nil
+    @rename_message = nil
+    @rename_drafts = {}
 
     FileUtils.mkdir_p(@base_path) unless Dir.exist?(@base_path)
   end
@@ -234,10 +241,8 @@ class TrySelector
   private
 
   def setup_terminal
-    unless @test_no_cls
-      UI.cls
-      UI.hide_cursor
-    end
+    UI.cls
+    UI.hide_cursor
 
     # Handle terminal resize
     @old_winch_handler = Signal.trap('WINCH') do
@@ -246,10 +251,8 @@ class TrySelector
   end
 
   def restore_terminal
-    unless @test_no_cls
-      UI.cls
-      UI.show_cursor
-    end
+    UI.cls
+    UI.show_cursor
 
     # Restore original SIGWINCH handler
     Signal.trap('WINCH', @old_winch_handler) if @old_winch_handler
@@ -383,6 +386,13 @@ class TrySelector
       render(tries)
 
       key = read_key
+      next if key.nil?
+
+      if @rename_mode
+        handle_rename_key(key)
+        break if @selected
+        next
+      end
 
       case key
       when "\r"  # Enter (carriage return)
@@ -469,6 +479,8 @@ class TrySelector
           @selected = nil
           break
         end
+      when "\x12"  # Ctrl-R initiates rename
+        start_rename_mode(tries)
       when String
         # Only accept printable characters, not escape sequences
         if key.length == 1 && key =~ /[a-zA-Z0-9\-\_\. ]/
@@ -510,15 +522,13 @@ class TrySelector
     separator = "─" * (term_width - 1)
 
     # Header
-    UI.puts "{h1}📁 Try Selector{reset}"
+    UI.puts "{h1}📁 Try Directory / Try Selector{reset}"
     UI.puts "{dim}#{separator}{/fg}"
 
     # Search input with cursor at correct position
-    before_cursor = @input_buffer[0...@input_cursor_pos]
-    char_at_cursor = @input_buffer[@input_cursor_pos] || " "
-    after_cursor = @input_buffer[(@input_cursor_pos + 1)..-1] || ""
+    search_line = format_buffer_with_cursor(@input_buffer, @input_cursor_pos)
     # Render cursor by inverting the character at cursor position
-    UI.puts "{dim}Search:{/fg} {b}#{before_cursor}\e[7m#{char_at_cursor}\e[27m#{after_cursor}{/b}"
+    UI.puts "{dim}Search:{/fg} {b}#{search_line}{/b}"
     UI.puts "{dim}#{separator}{/fg}"
 
     # Calculate visible window based on actual terminal height
@@ -556,7 +566,7 @@ class TrySelector
         time_text = format_relative_time(try_dir[:mtime])
         score_text = sprintf("%.1f", try_dir[:score])
         meta_text = "#{time_text}, #{score_text}"
-        meta_width = meta_text.length + 1  # +1 for leading space
+        meta_width = meta_text.length + 2  # Leading gap and trailing space
 
         # Layout: "→ 📁 name                    meta" or "  📁 name..."
         # prefix = 5 chars ("→ 📁 " or "  📁 ")
@@ -620,15 +630,13 @@ class TrySelector
           display_text = name
         end
 
-        UI.print "{/section}" if is_selected
-
         # Show metadata if name doesn't overlap its position
         if display_text.length <= max_name_for_meta
           padding_needed = meta_start - prefix_width - display_text.length
           UI.print " " * padding_needed
-          UI.print "{dim}#{meta_text}{/fg}"
+          UI.print "{dim}#{meta_text} {/fg}"
         end
-
+        UI.print "{/section}" if is_selected
         UI.print "{/strike}" if is_marked
 
       else
@@ -648,6 +656,7 @@ class TrySelector
         text_width = display_text.length
         padding_needed = term_width - 3 - text_width  # -3 for arrow + space
         UI.print " " * [padding_needed, 1].max
+        UI.print "{/section}" if is_selected
       end
 
       # End selection and reset all formatting
@@ -660,22 +669,53 @@ class TrySelector
       UI.puts "{dim}[#{@scroll_offset + 1}-#{visible_end}/#{total_items}]{/fg}"
     end
 
-    # Instructions at bottom
-    UI.puts "{dim}#{separator}{/fg}"
-
-    # Show delete status if present, otherwise show instructions
-    if @delete_status
-      UI.puts "{b}#{@delete_status}{/b}"
-      @delete_status = nil  # Clear after showing
-    elsif @delete_mode
-      count = @marked_for_deletion.length
-      UI.puts "{strike} DELETE MODE {/strike} #{count} marked  |  Ctrl-D: Toggle  Enter: Confirm  Esc: Cancel"
+    if @rename_mode
+      render_rename_dialog(separator)
     else
-      UI.puts "{dim}↑↓: Navigate  Enter: Select  Ctrl-D: Delete  Esc: Cancel{/fg}"
+      UI.puts "{dim}#{separator}{/fg}"
+      render_footer
     end
 
     # Flush the double buffer
     UI.flush
+  end
+
+  def render_footer
+    if @status_message
+      UI.puts @status_message
+      @status_message = nil
+    elsif @delete_mode
+      count = @marked_for_deletion.length
+      UI.puts "{strike} DELETE MODE {/strike} #{count} marked  |  Ctrl-D: Toggle  Enter: Confirm  Esc: Cancel"
+    else
+      UI.puts "{dim}↑↓: Navigate  Enter: Select  Ctrl-D: Delete  Ctrl-R: Rename  Esc: Cancel{/fg}"
+    end
+  end
+
+  def flash_status(text, tone: :info)
+    formatted = case tone
+    when :error
+      "{error}#{text}{/error}"
+    when :success
+      "{success}#{text}{/success}"
+    else
+      "{b}#{text}{/b}"
+    end
+    @status_message = formatted
+  end
+
+  def render_rename_dialog(separator)
+    current_name = @rename_entry ? @rename_entry[:basename] : ""
+    UI.puts "{dim}#{separator}{/fg}"
+    UI.puts "{h2}📝 Rename Directory{/reset}"
+    UI.puts "{dim}#{separator}{/fg}"
+    UI.puts "{dim}Current:{/fg} #{current_name}"
+    UI.puts "{dim}New name:{/fg} {b}#{format_buffer_with_cursor(@rename_buffer, @rename_cursor)}{/b}"
+    if @rename_message
+      UI.puts "{error}#{@rename_message}{/error}"
+    end
+    UI.puts "{dim}#{separator}{/fg}"
+    UI.puts "{dim}Enter: Confirm  Esc: Cancel{/fg}"
   end
 
 
@@ -763,6 +803,152 @@ class TrySelector
     end
 
     result
+  end
+
+  def format_buffer_with_cursor(buffer, cursor_pos)
+    buffer ||= ""
+    before = buffer[0...cursor_pos] || ""
+    char_at_cursor = buffer[cursor_pos] || " "
+    after = buffer[(cursor_pos + 1)..-1] || ""
+    "#{before}\e[7m#{char_at_cursor}\e[27m#{after}"
+  end
+
+  def start_rename_mode(tries)
+    return if @delete_mode
+    return unless @cursor_pos < tries.length
+    entry = tries[@cursor_pos]
+    return unless entry
+
+    @rename_mode = true
+    @rename_entry = entry.dup
+    draft = @rename_drafts[@rename_entry[:path]]
+    if draft
+      @rename_buffer = draft[:buffer].dup
+      @rename_cursor = [[draft[:cursor] || draft[:buffer].length, 0].max, @rename_buffer.length].min
+    else
+      @rename_buffer = entry[:basename].dup
+      @rename_cursor = @rename_buffer.length
+    end
+    @rename_message = nil
+    remember_rename_state
+  end
+
+  def remember_rename_state
+    return unless @rename_entry && @rename_entry[:path]
+    @rename_drafts[@rename_entry[:path]] = {
+      buffer: @rename_buffer.dup,
+      cursor: @rename_cursor
+    }
+  end
+
+  def handle_rename_key(key)
+    case key
+    when "\e", "\x03"
+      if @rename_message
+        cancel_rename(nil, prefer_error: true)
+      else
+        cancel_rename("Rename cancelled")
+      end
+    when "\r"
+      commit_rename
+    when "\x7F", "\b", "\x08"
+      if @rename_cursor > 0
+        @rename_buffer = @rename_buffer[0...(@rename_cursor - 1)] + (@rename_buffer[@rename_cursor..-1] || "")
+        @rename_cursor -= 1
+      end
+      @rename_message = nil
+      remember_rename_state
+    when "\e[D"
+      @rename_cursor = [@rename_cursor - 1, 0].max
+      remember_rename_state
+    when "\e[C"
+      @rename_cursor = [@rename_cursor + 1, @rename_buffer.length].min
+      remember_rename_state
+    when "\x01"
+      @rename_cursor = 0
+      remember_rename_state
+    when "\x05"
+      @rename_cursor = @rename_buffer.length
+      remember_rename_state
+    when "\x17"
+      if @rename_cursor > 0
+        pos = @rename_cursor - 1
+        while pos >= 0 && @rename_buffer[pos] !~ /[a-zA-Z0-9]/
+          pos -= 1
+        end
+        while pos >= 0 && @rename_buffer[pos] =~ /[a-zA-Z0-9]/
+          pos -= 1
+        end
+        new_pos = pos + 1
+        @rename_buffer = @rename_buffer[0...new_pos] + (@rename_buffer[@rename_cursor..-1] || "")
+        @rename_cursor = new_pos
+      end
+      @rename_message = nil
+      remember_rename_state
+    when String
+      if key.length == 1 && key =~ /[a-zA-Z0-9\-\_\.\s\/]/
+        @rename_buffer = @rename_buffer[0...@rename_cursor] + key + (@rename_buffer[@rename_cursor..-1] || "")
+        @rename_cursor += 1
+        @rename_message = nil
+        remember_rename_state
+      end
+    end
+  end
+
+  def cancel_rename(message = nil, prefer_error: false)
+    remember_rename_state if @rename_entry
+    @rename_mode = false
+    @rename_entry = nil
+    @rename_buffer = ""
+    @rename_cursor = 0
+    if @rename_message && (prefer_error || message.nil?)
+      flash_status(@rename_message, tone: :error)
+    elsif message
+      flash_status(message)
+    end
+    @rename_message = nil
+  end
+
+  def commit_rename
+    return unless @rename_entry
+    new_name = @rename_buffer.strip
+
+    if new_name.empty?
+      @rename_message = "Name cannot be empty"
+      return
+    end
+
+    if new_name == @rename_entry[:basename]
+      cancel_rename("Rename cancelled")
+      return
+    end
+
+    if new_name.include?('/')
+      @rename_message = "Name cannot include /"
+      return
+    end
+
+    base_real = File.realpath(@base_path)
+    target_path = File.join(base_real, new_name)
+    if File.exist?(target_path)
+      @rename_message = "Directory already exists"
+      return
+    end
+
+    entry_path = @rename_entry[:path]
+    original_name = @rename_entry[:basename]
+    @rename_drafts.delete(entry_path) if entry_path
+    @rename_mode = false
+    @rename_buffer = ""
+    @rename_cursor = 0
+    @rename_message = nil
+    @rename_entry = nil
+    @selected = {
+      type: :rename,
+      base_path: base_real,
+      from: original_name,
+      to: new_name
+    }
   end
 
   def handle_selection(try_dir)
@@ -862,15 +1048,15 @@ class TrySelector
         # Return delete action with all paths
         @selected = { type: :delete, paths: validated_paths, base_path: base_real }
         names = validated_paths.map { |p| p[:basename] }.join(", ")
-        @delete_status = "Deleted: {strike}#{names}{/strike}"
+        flash_status("Deleted: {strike}#{names}{/strike}", tone: :success)
         @all_tries = nil  # Clear cache
         @marked_for_deletion.clear
         @delete_mode = false
       rescue => e
-        @delete_status = "Error: #{e.message}"
+        flash_status("Error: #{e.message}", tone: :error)
       end
     else
-      @delete_status = "Delete cancelled"
+      flash_status("Delete cancelled")
       @marked_for_deletion.clear
       @delete_mode = false
     end
@@ -1062,6 +1248,7 @@ if __FILE__ == $0
         when 'CTRL-N', 'CTRLN' then keys << "\x0E"
         when 'CTRL-P', 'CTRLP' then keys << "\x10"
         when 'CTRL-W', 'CTRLW' then keys << "\x17"
+        when 'CTRL-R', 'CTRLR' then keys << "\x12"
         when /^TYPE=(.*)$/
           $1.each_char { |ch| keys << ch }
         else
@@ -1194,7 +1381,6 @@ if __FILE__ == $0
       base_path: tries_path,
       initial_input: and_type,
       test_render_once: and_exit,
-      test_no_cls: (and_exit || (and_keys && !and_keys.empty?)),
       test_keys: and_keys,
       test_confirm: and_confirm
     )
@@ -1206,6 +1392,8 @@ if __FILE__ == $0
       script_delete(result[:paths], result[:base_path])
     when :mkdir
       script_mkdir_cd(result[:path])
+    when :rename
+      script_rename(result[:base_path], result[:from], result[:to])
     else
       script_cd(result[:path])
     end
@@ -1262,6 +1450,14 @@ if __FILE__ == $0
     paths.each { |item| cmds << "[[ -d #{q(item[:basename])} ]] && rm -rf #{q(item[:basename])}" }
     cmds << "( cd #{q(Dir.pwd)} 2>/dev/null || cd \"$HOME\" )"
     cmds
+  end
+
+  def script_rename(base_path, from_name, to_name)
+    [
+      "cd #{q(base_path)}",
+      "mv #{q(from_name)} #{q(to_name)}",
+      "cd #{q(File.join(base_path, to_name))}"
+    ]
   end
 
   # Return a unique directory name under tries_path by appending -2, -3, ... if needed

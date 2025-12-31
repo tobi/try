@@ -117,10 +117,10 @@ fi
 
 # Test: Rename shows in footer hints
 output=$(try_run --path="$REN_TEST_DIR" --and-exit exec 2>&1)
-if echo "$output" | strip_ansi | grep -q '\^R'; then
+if echo "$output" | strip_ansi | grep -qi 'Ctrl-R'; then
     pass
 else
-    fail "Footer should show ^R: Rename hint" "^R: Rename" "$output" "rename"
+    fail "Footer should show Ctrl-R: Rename hint" "Ctrl-R: Rename" "$output" "rename"
 fi
 
 # Test: Rename dialog shows separator line
@@ -178,6 +178,22 @@ if echo "$output" | grep -q "2025-11-02-"; then
     pass
 else
     fail "Entry with date should pre-fill date" "2025-11-02- prefix" "$output" "rename"
+fi
+
+# Test: Rename remembers previous input after cancel
+output=$(try_run --path="$REN_TEST_DIR" --and-keys='CTRL-R,r,ESC,CTRL-R,ESC' exec 2>&1)
+if echo "$output" | strip_ansi | grep -q "nodate-projectr"; then
+    pass
+else
+    fail "Rename should remember previous edits" "nodate-projectr" "$output" "rename"
+fi
+
+# Test: Rename errors surface after exiting dialog
+output=$(try_run --path="$REN_TEST_DIR" --and-keys='CTRL-R,TYPE=bad/name,ENTER,ESC' exec 2>&1)
+if [ "$(echo "$output" | strip_ansi | grep -ci "Name cannot include /" || true)" -ge 2 ]; then
+    pass
+else
+    fail "Rename error should be shown after exit" "Name cannot include / (twice)" "$output" "rename"
 fi
 
 # Cleanup
