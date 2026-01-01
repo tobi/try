@@ -199,6 +199,11 @@ class TrySelector
     @test_confirm = test_confirm
     @old_winch_handler = nil  # Store original SIGWINCH handler
     @needs_redraw = false
+    @rename_mode = false
+    @rename_entry = nil
+    @rename_buffer = ""
+    @rename_cursor_pos = 0
+    @rename_error = nil
 
     FileUtils.mkdir_p(@base_path) unless Dir.exist?(@base_path)
   end
@@ -380,6 +385,12 @@ class TrySelector
       render(tries)
 
       key = read_key
+      next unless key
+
+      if @rename_mode
+        break if handle_rename_key(key)
+        next
+      end
 
       case key
       when "\r"  # Enter (carriage return)
@@ -466,6 +477,10 @@ class TrySelector
           @selected = nil
           break
         end
+      when "\x12"  # Ctrl-R - rename
+        if @cursor_pos < tries.length
+          start_rename(tries[@cursor_pos])
+        end
       when String
         # Only accept printable characters, not escape sequences
         if key.length == 1 && key =~ /[a-zA-Z0-9\-\_\. ]/
@@ -508,6 +523,7 @@ class TrySelector
 
     # Header
     UI.puts "{h1}📁 Try Selector{reset}"
+    UI.puts "{dim}Try Directory{/fg}"
     UI.puts "{dim}#{separator}{/fg}"
 
     # Search input with cursor at correct position
@@ -664,15 +680,17 @@ class TrySelector
     # Instructions at bottom
     UI.puts "{dim}#{separator}{/fg}"
 
-    # Show delete status if present, otherwise show instructions
-    if @delete_status
+    # Show delete status or rename dialog/instructions
+    if @rename_mode
+      render_rename_dialog(separator)
+    elsif @delete_status
       UI.puts "{b}#{@delete_status}{/b}"
       @delete_status = nil  # Clear after showing
     elsif @delete_mode
       count = @marked_for_deletion.length
       UI.puts "{strike} DELETE MODE {/strike} #{count} marked  |  Ctrl-D: Toggle  Enter: Confirm  Esc: Cancel"
     else
-      UI.puts "{dim}↑↓: Navigate  Enter: Select  Ctrl-D: Delete  Esc: Cancel{/fg}"
+      UI.puts "{dim}↑↓: Navigate  Enter: Select  Ctrl-D: Delete  Ctrl-R: Rename  Esc: Cancel{/fg}"
     end
 
     # Flush the double buffer
@@ -764,6 +782,109 @@ class TrySelector
     end
 
     result
+  end
+
+  def start_rename(entry)
+    @rename_mode = true
+    @rename_entry = entry
+    @rename_buffer = entry[:basename].dup
+    @rename_cursor_pos = @rename_buffer.length
+    @rename_error = nil
+    @delete_mode = false
+    @marked_for_deletion.clear
+  end
+
+  def exit_rename
+    @rename_mode = false
+    @rename_entry = nil
+    @rename_buffer = ""
+    @rename_cursor_pos = 0
+    @rename_error = nil
+  end
+
+  def handle_rename_key(key)
+    case key
+    when "\r"
+      return finalize_rename
+    when "\e", "\x03"  # ESC or Ctrl-C cancels rename mode
+      exit_rename
+      return false
+    when "\x7F", "\b"
+      if @rename_cursor_pos > 0
+        @rename_buffer = @rename_buffer[0...(@rename_cursor_pos - 1)] + @rename_buffer[@rename_cursor_pos..-1]
+        @rename_cursor_pos -= 1
+      end
+      @rename_error = nil
+    when "\x01"  # Ctrl-A
+      @rename_cursor_pos = 0
+    when "\x05"  # Ctrl-E
+      @rename_cursor_pos = @rename_buffer.length
+    when "\x02"  # Ctrl-B
+      @rename_cursor_pos = [@rename_cursor_pos - 1, 0].max
+    when "\x06"  # Ctrl-F
+      @rename_cursor_pos = [@rename_cursor_pos + 1, @rename_buffer.length].min
+    when "\x0B"  # Ctrl-K
+      @rename_buffer = @rename_buffer[0...@rename_cursor_pos]
+      @rename_error = nil
+    when String
+      if key.length == 1 && key =~ /[a-zA-Z0-9\-_\.\s\/]/
+        @rename_buffer = @rename_buffer[0...@rename_cursor_pos] + key + @rename_buffer[@rename_cursor_pos..-1]
+        @rename_cursor_pos += 1
+        @rename_error = nil
+      end
+    end
+    false
+  end
+
+  def finalize_rename
+    new_name = @rename_buffer.strip.gsub(/\s+/, '-')
+    old_name = @rename_entry ? @rename_entry[:basename] : nil
+
+    if new_name.empty?
+      @rename_error = "Name cannot be empty"
+      return false
+    end
+
+    if new_name.include?('/')
+      @rename_error = "Name cannot contain /"
+      return false
+    end
+
+    if old_name && new_name == old_name
+      exit_rename
+      return false
+    end
+
+    if Dir.exist?(File.join(@base_path, new_name))
+      @rename_error = "Directory exists: #{new_name}"
+      return false
+    end
+
+    if old_name
+      @selected = { type: :rename, old: old_name, new: new_name, base_path: @base_path }
+    end
+    exit_rename
+    true
+  end
+
+  def render_rename_dialog(separator)
+    return unless @rename_mode && @rename_entry
+
+    UI.puts "{dim}#{separator}{/fg}"
+    UI.puts "{h2}📝 Rename{reset}"
+    UI.puts "Current: #{@rename_entry[:basename]}"
+
+    before = @rename_buffer[0...@rename_cursor_pos]
+    cursor_char = @rename_buffer[@rename_cursor_pos] || " "
+    after = @rename_buffer[(@rename_cursor_pos + 1)..-1] || ""
+    UI.puts "New name: #{before}\e[7m#{cursor_char}\e[27m#{after}"
+
+    if @rename_error
+      UI.puts "{b}#{@rename_error}{/b}"
+    end
+
+    UI.puts "{dim}Enter: Confirm  Esc: Cancel{/fg}"
+    UI.puts "{dim}#{separator}{/fg}"
   end
 
   def handle_selection(try_dir)
@@ -1062,6 +1183,7 @@ if __FILE__ == $0
         when 'CTRL-K', 'CTRLK' then keys << "\x0B"
         when 'CTRL-N', 'CTRLN' then keys << "\x0E"
         when 'CTRL-P', 'CTRLP' then keys << "\x10"
+        when 'CTRL-R', 'CTRLR' then keys << "\x12"
         when 'CTRL-W', 'CTRLW' then keys << "\x17"
         when /^TYPE=(.*)$/
           $1.each_char { |ch| keys << ch }
@@ -1206,6 +1328,8 @@ if __FILE__ == $0
       script_delete(result[:paths], result[:base_path])
     when :mkdir
       script_mkdir_cd(result[:path])
+    when :rename
+      script_rename(result[:base_path], result[:old], result[:new])
     else
       script_cd(result[:path])
     end
@@ -1244,6 +1368,12 @@ if __FILE__ == $0
 
   def script_clone(path, uri)
     ["mkdir -p #{q(path)}", "echo #{q(UI.expand_tokens("Using {b}git clone{/b} to create this trial from #{uri}."))}", "git clone '#{uri}' #{q(path)}"] + script_cd(path)
+  end
+  def script_rename(base_path, old_name, new_name)
+    cd_root = "cd #{q(base_path)}"
+    rename_cmd = "mv #{q(old_name)} #{q(new_name)}"
+    cd_new = "cd #{q(File.join(base_path, new_name))}"
+    [cd_root, rename_cmd, cd_new]
   end
 
   def script_worktree(path, repo = nil)
