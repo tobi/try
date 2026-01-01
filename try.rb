@@ -19,7 +19,9 @@ module UI
     '{h2}' => "\e[1;34m",          # Bold + Blue (secondary headings)
     # Selection
     '{section}' => "\e[1m",        # Bold - start of selected/highlighted section
-    '{/section}' => "\e[0m",       # Full reset - end of selected section
+    '{/section}' => "\e[22m",      # Reset bold but keep other attributes
+    '{select_line}' => "\e[48;5;237m",  # Soft gray background for selected rows
+    '{/select_line}' => "\e[49m",       # Reset background for selected rows
     # Strikethrough (for deleted items)
     '{strike}' => "\e[48;5;52m",   # Dark red background
     '{/strike}' => "\e[49m",       # Reset background
@@ -108,7 +110,7 @@ module UI
     @@current_line = ""
     @@buffer.clear
     @@last_buffer.clear
-    io.print("\e[2J\e[H")  # Clear screen and go home
+    io.print("\e[2J\e[H\e[J")  # Clear screen, home cursor, and clear below for compatibility
   end
 
   def self.hide_cursor
@@ -178,7 +180,7 @@ end
 class TrySelector
   TRY_PATH = ENV['TRY_PATH'] || File.expand_path("~/src/tries")
 
-  def initialize(search_term = "", base_path: TRY_PATH, initial_input: nil, test_render_once: false, test_no_cls: false, test_keys: nil, test_confirm: nil)
+  def initialize(search_term = "", base_path: TRY_PATH, initial_input: nil, test_render_once: false, test_keys: nil, test_confirm: nil)
     @search_term = search_term.gsub(/\s+/, '-')
     @cursor_pos = 0  # Navigation cursor (list position)
     @input_cursor_pos = 0  # Text cursor (position within search buffer)
@@ -192,7 +194,6 @@ class TrySelector
     @delete_mode = false  # Whether we're in deletion mode
     @marked_for_deletion = []  # Paths marked for deletion
     @test_render_once = test_render_once
-    @test_no_cls = test_no_cls
     @test_keys = test_keys
     @test_had_keys = test_keys && !test_keys.empty?
     @test_confirm = test_confirm
@@ -234,10 +235,8 @@ class TrySelector
   private
 
   def setup_terminal
-    unless @test_no_cls
-      UI.cls
-      UI.hide_cursor
-    end
+    UI.cls
+    UI.hide_cursor
 
     # Handle terminal resize
     @old_winch_handler = Signal.trap('WINCH') do
@@ -246,10 +245,8 @@ class TrySelector
   end
 
   def restore_terminal
-    unless @test_no_cls
-      UI.cls
-      UI.show_cursor
-    end
+    UI.cls
+    UI.show_cursor
 
     # Restore original SIGWINCH handler
     Signal.trap('WINCH', @old_winch_handler) if @old_winch_handler
@@ -542,20 +539,27 @@ class TrySelector
         UI.puts
       end
 
-      # Print cursor/selection indicator
       is_selected = idx == @cursor_pos
+      is_try_entry = idx < tries.length
+      try_dir = is_try_entry ? tries[idx] : nil
+      is_marked = is_try_entry && @marked_for_deletion.include?(try_dir[:path])
+      selection_bg_active = is_selected && !is_marked
+
+      UI.print "{select_line}" if selection_bg_active
+      UI.print "{strike}" if is_marked
+
+      # Print cursor/selection indicator
       UI.print(is_selected ? "{b}→ {/b}" : "  ")
 
       # Display try directory or "Create new" option
-      if idx < tries.length
-        try_dir = tries[idx]
-        is_marked = @marked_for_deletion.include?(try_dir[:path])
+      if is_try_entry
         basename = try_dir[:basename]
 
         # Calculate metadata
         time_text = format_relative_time(try_dir[:mtime])
-        score_text = sprintf("%.1f", try_dir[:score])
-        meta_text = "#{time_text}, #{score_text}"
+        score_text = sprintf("%.1f", try_dir[:score].to_f)
+        # Trailing space keeps regex-friendly delimiter after the score
+        meta_text = "#{time_text}, #{score_text} "
         meta_width = meta_text.length + 1  # +1 for leading space
 
         # Layout: "→ 📁 name                    meta" or "  📁 name..."
@@ -567,9 +571,6 @@ class TrySelector
 
         # Max name width before truncation (leave 1 char at end)
         max_name_width = term_width - prefix_width - 1
-
-        # Start strike formatting for marked items
-        UI.print "{strike}" if is_marked
 
         # Render the folder/trash icon
         UI.print(is_marked ? "🗑️  " : "📁 ")
@@ -628,9 +629,6 @@ class TrySelector
           UI.print " " * padding_needed
           UI.print "{dim}#{meta_text}{/fg}"
         end
-
-        UI.print "{/strike}" if is_marked
-
       else
         # This is the "Create new" option
         UI.print "{section}" if is_selected
@@ -649,6 +647,9 @@ class TrySelector
         padding_needed = term_width - 3 - text_width  # -3 for arrow + space
         UI.print " " * [padding_needed, 1].max
       end
+
+      UI.print "{/strike}" if is_marked
+      UI.print "{/select_line}" if selection_bg_active
 
       # End selection and reset all formatting
       UI.puts
@@ -1194,7 +1195,6 @@ if __FILE__ == $0
       base_path: tries_path,
       initial_input: and_type,
       test_render_once: and_exit,
-      test_no_cls: (and_exit || (and_keys && !and_keys.empty?)),
       test_keys: and_keys,
       test_confirm: and_confirm
     )
