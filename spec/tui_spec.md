@@ -198,7 +198,7 @@ Tokens are preserved intact - never split a `{b}...{/b}` pair.
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
-│ ↑↓: Navigate  Enter: Select  Ctrl-D: Delete  Esc: Cancel      │
+│ ↑↓: Navigate  Enter: Select  Ctrl-D: Delete  Ctrl-R: Rename  Esc: Cancel │
 └──────────────────────────────────────────────────────────────┘
 ```
 
@@ -211,7 +211,8 @@ Tokens are preserved intact - never split a `{b}...{/b}` pair.
 | ↓ / Ctrl-N | Move selection down |
 | Enter | Select current entry |
 | Esc / Ctrl-C | Cancel selection |
-| Ctrl-D | Delete selected directory |
+| Ctrl-D | Delete selected directory (toggle delete mode) |
+| Ctrl-R | Rename selected directory |
 
 ### Line Editing (in search input)
 | Key | Action |
@@ -239,7 +240,8 @@ Selection can result in three action types:
 |--------|---------|--------|
 | CD | Select existing directory | Navigate to directory |
 | MKDIR | Select "[new]" entry | Create and navigate to new directory |
-| DELETE | Press Ctrl-D on entry | Show delete confirmation dialog |
+| DELETE | Press Ctrl-D on entry | Enter delete mode (single or batch) |
+| RENAME | Press Ctrl-R on entry | Enter rename dialog |
 | CANCEL | Press Esc | Exit without action |
 
 ## New Directory Creation
@@ -336,3 +338,46 @@ Multiple marked items emit multiple delete commands chained with `&&`.
 This order prevents:
 1. Deleting directories outside the tries folder (symlink attacks)
 2. Leaving the shell in an invalid state (deleted PWD)
+
+## Rename Mode
+
+Pressing `Ctrl-R` on the highlighted entry opens the rename dialog without leaving the selector.
+
+### Dialog Layout
+
+```
+──────────────────────────────────────────────
+📝 Rename
+Current: 2025-12-31-some-project
+New name: 2025-12-31-some-proj▉
+──────────────────────────────────────────────
+Enter: Confirm  Esc: Cancel
+```
+
+- Header uses the pencil emoji and `{h2}` styling (`📝 Rename`)
+- The current basename is shown verbatim after `Current:`
+- The editable field is prefixed `New name:` and renders the insert cursor as a reverse-video block inline with the text
+- Separator lines match the rest of the UI using `─` repeated across the terminal width
+- Footer hints are limited to `Enter: Confirm  Esc: Cancel` while rename mode is active
+
+### Editing Behavior
+
+- Initial buffer is the selected entry’s basename (including date prefix if present)
+- Line-editing keys reuse the same bindings as the search input: `Ctrl-A/E/B/F`, `Ctrl-K`, `Ctrl-W`, Backspace, printable characters, etc.
+- `Ctrl-C` or `Esc` exits rename mode without making changes
+- Empty names, names containing `/`, or duplicates of other directories display an inline error (`{b}`) beneath the input and keep the dialog open
+- Whitespace collapses to `-` to maintain the `YYYY-MM-DD-name` slug style
+
+### Command Emission
+
+Confirming a rename emits a shell script via `UI.emit_tasks_script`:
+
+1. `cd` into the tries root
+2. `mv 'old-name' 'new-name'`
+3. `cd 'new-name'`
+
+The wrapper evaluates this script so the user’s shell ends in the renamed directory.
+
+### Footer Hint
+
+While not in delete or rename mode, the footer help line always includes `Ctrl-R: Rename` to advertise the shortcut.
