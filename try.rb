@@ -460,6 +460,9 @@ class TrySelector
           # Exit delete mode if no more marks
           @delete_mode = false if @marked_for_deletion.empty?
         end
+      when "\x14"  # Ctrl-T - create new try (immediate)
+        handle_create_new
+        break if @selected
       when "\x03", "\e"  # Ctrl-C or ESC
         if @delete_mode
           # Exit delete mode, clear marks
@@ -671,7 +674,7 @@ class TrySelector
       count = @marked_for_deletion.length
       UI.puts "{strike} DELETE MODE {/strike} #{count} marked  |  Ctrl-D: Toggle  Enter: Confirm  Esc: Cancel"
     else
-      UI.puts "{dim}↑↓: Navigate  Enter: Select  Ctrl-D: Delete  Esc: Cancel{/fg}"
+      UI.puts "{dim}↑↓: Navigate  Enter: Select  Ctrl-T: New  Ctrl-D: Delete  Esc: Cancel{/fg}"
     end
 
     # Flush the double buffer
@@ -1061,6 +1064,7 @@ if __FILE__ == $0
         when 'CTRL-K', 'CTRLK' then keys << "\x0B"
         when 'CTRL-N', 'CTRLN' then keys << "\x0E"
         when 'CTRL-P', 'CTRLP' then keys << "\x10"
+        when 'CTRL-T', 'CTRLT' then keys << "\x14"
         when 'CTRL-W', 'CTRLW' then keys << "\x17"
         when /^TYPE=(.*)$/
           $1.each_char { |ch| keys << ch }
