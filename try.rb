@@ -1167,7 +1167,7 @@ if __FILE__ == $0
       base = resolve_unique_name_with_versioning(tries_path, date_prefix, base)
       full_path = File.join(tries_path, "#{date_prefix}-#{base}")
       # Use worktree if .git exists, otherwise just mkdir
-      if File.directory?(File.join(repo_dir, '.git'))
+      if File.exist?(File.join(repo_dir, '.git'))
         return script_worktree(full_path, repo_dir)
       else
         return script_mkdir_cd(full_path)
