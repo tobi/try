@@ -259,6 +259,30 @@ class TrySelector
     # Load trials only once - single pass through directory
     @all_tries ||= begin
       tries = []
+      
+      # Pre-calculate sizes for all directories in one go for performance
+      sizes = {}
+      begin
+        require 'shellwords'
+        
+        # Use -k for consistent numeric output (kilobytes), faster parsing
+        du_output = `du -k -d 1 #{Shellwords.escape(@base_path)} 2>/dev/null`
+        
+        du_output.each_line do |line|
+          parts = line.strip.split("\t")
+          size_kb = parts[0]
+          path = parts[1]
+          
+          next if path.nil? || path.empty?
+          
+          basename = File.basename(path)
+          # Convert KB to human-readable format
+          sizes[basename] = format_size(size_kb.to_i * 1024)
+        end
+      rescue
+        # Silent fail
+      end
+      
       Dir.foreach(@base_path) do |entry|
         # exclude . and .. but also .git, and any other hidden dirs.
         next if entry.start_with?('.')
@@ -276,7 +300,8 @@ class TrySelector
           path: path,
           is_new: false,
           ctime: stat.ctime,
-          mtime: stat.mtime
+          mtime: stat.mtime,
+          size: sizes[entry] || "???"
         }
       end
       tries
@@ -558,7 +583,8 @@ class TrySelector
         # Calculate metadata
         time_text = format_relative_time(try_dir[:mtime])
         score_text = sprintf("%.1f", try_dir[:score])
-        meta_text = "#{time_text}, #{score_text}"
+        size_text = try_dir[:size]
+        meta_text = "#{time_text}, #{size_text}, #{score_text}"
         meta_width = meta_text.length + 1  # +1 for leading space
 
         # Layout: "→ 📁 name                    meta" or "  📁 name..."
@@ -679,6 +705,22 @@ class TrySelector
 
     # Flush the double buffer
     UI.flush
+  end
+
+  def format_size(bytes)
+    return "0B" if bytes.zero?
+    
+    units = ['B', 'K', 'M', 'G', 'T']
+    exp = (Math.log(bytes) / Math.log(1024)).to_i
+    exp = [exp, units.length - 1].min
+    
+    size = bytes / (1024.0 ** exp)
+    
+    if exp.zero?
+      "#{bytes}B"
+    else
+      "#{size.round(1)}#{units[exp]}"
+    end
   end
 
 
@@ -1382,3 +1424,4 @@ if __FILE__ == $0
   end
 
 end
+
