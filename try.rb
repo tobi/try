@@ -880,20 +880,30 @@ class TrySelector
 
     if confirmation == "YES"
       begin
-        base_real = File.realpath(@base_path)
-
-        # Validate all paths first
+        # Validate all paths first - each item validates against its own root
         validated_paths = []
         marked_items.each do |item|
           target_real = File.realpath(item[:path])
-          unless target_real.start_with?(base_real + "/")
-            raise "Safety check failed: #{target_real} is not inside #{base_real}"
+          
+          # Determine the correct root path based on item source
+          if item[:source] == :github && gh_path_enabled?
+            root_real = File.realpath(gh_path_root)
+            unless target_real.start_with?(root_real + "/")
+              raise "Safety check failed: #{target_real} is not inside #{root_real}"
+            end
+          else
+            # Default to tries path for :tries source or when GH_PATH not enabled
+            base_real = File.realpath(@base_path)
+            unless target_real.start_with?(base_real + "/")
+              raise "Safety check failed: #{target_real} is not inside #{base_real}"
+            end
           end
+          
           validated_paths << { path: target_real, basename: item[:basename] }
         end
 
-        # Return delete action with all paths
-        @selected = { type: :delete, paths: validated_paths, base_path: base_real }
+        # Return delete action with all paths (base_path kept for compatibility but not used)
+        @selected = { type: :delete, paths: validated_paths, base_path: File.realpath(@base_path) }
         names = validated_paths.map { |p| p[:basename] }.join(", ")
         @delete_status = "Deleted: {strike}#{names}{/strike}"
         @all_tries = nil  # Clear cache
@@ -1326,9 +1336,9 @@ if __FILE__ == $0
     ["mkdir -p #{q(path)}", "echo #{q(UI.expand_tokens("Using {b}git worktree{/b} to create this trial from #{src}."))}", worktree_cmd] + script_cd(path)
   end
 
-  def script_delete(paths, base_path)
-    cmds = ["cd #{q(base_path)}"]
-    paths.each { |item| cmds << "[[ -d #{q(item[:basename])} ]] && rm -rf #{q(item[:basename])}" }
+  def script_delete(paths, _base_path)
+    cmds = []
+    paths.each { |item| cmds << "[[ -d #{q(item[:path])} ]] && rm -rf #{q(item[:path])}" }
     cmds << "( cd #{q(Dir.pwd)} 2>/dev/null || cd \"$HOME\" )"
     cmds
   end

@@ -57,9 +57,8 @@ In exec mode, delete outputs a shell script that is evaluated by the shell wrapp
 ### Script Structure
 
 ```sh
-cd '/path/to/tries' && \
-  [[ -d 'dir-name-1' ]] && rm -rf 'dir-name-1' && \
-  [[ -d 'dir-name-2' ]] && rm -rf 'dir-name-2' && \
+[[ -d '/full/path/to/dir-name-1' ]] && rm -rf '/full/path/to/dir-name-1' && \
+  [[ -d '/full/path/to/dir-name-2' ]] && rm -rf '/full/path/to/dir-name-2' && \
   ( cd '/original/pwd' 2>/dev/null || cd "$HOME" )
 ```
 
@@ -67,23 +66,18 @@ Each command is on its own line, chained with `&& \` for readability, with 2-spa
 
 ### Script Components
 
-1. **Change to tries base directory**
+1. **Per-item delete commands**
    ```sh
-   cd '/path/to/tries' && \
-   ```
-   All deletions happen relative to the tries base path.
-
-2. **Per-item delete commands**
-   ```sh
-     [[ -d 'name' ]] && rm -rf 'name' && \
+   [[ -d '/full/path/to/name' ]] && rm -rf '/full/path/to/name' && \
    ```
    - Check directory exists before deletion
-   - Use basename only (not full path)
+   - Use absolute paths (supports both tries and GitHub sources)
    - Each on its own line with continuation
+   - Paths are validated before script generation to ensure they're within allowed roots
 
-3. **PWD restoration**
+2. **PWD restoration**
    ```sh
-     ( cd '/original/pwd' 2>/dev/null || cd "$HOME" )
+   ( cd '/original/pwd' 2>/dev/null || cd "$HOME" )
    ```
    - Attempt to return to original working directory
    - Fall back to $HOME if original no longer exists
@@ -101,9 +95,16 @@ For deleting two directories from `/home/user/tries`:
 
 ```sh
 # if you can read this, you didn't launch try from an alias. run try --help.
-cd '/home/user/tries' && \
-  [[ -d '2025-11-29-old-project' ]] && rm -rf '2025-11-29-old-project' && \
-  [[ -d '2025-11-28-abandoned' ]] && rm -rf '2025-11-28-abandoned' && \
+[[ -d '/home/user/tries/2025-11-29-old-project' ]] && rm -rf '/home/user/tries/2025-11-29-old-project' && \
+  [[ -d '/home/user/tries/2025-11-28-abandoned' ]] && rm -rf '/home/user/tries/2025-11-28-abandoned' && \
+  ( cd '/home/user/code' 2>/dev/null || cd "$HOME" )
+```
+
+For deleting a GitHub repository (when `GH_PATH` is set):
+
+```sh
+# if you can read this, you didn't launch try from an alias. run try --help.
+[[ -d '/home/user/github/owner/repo' ]] && rm -rf '/home/user/github/owner/repo' && \
   ( cd '/home/user/code' 2>/dev/null || cd "$HOME" )
 ```
 
@@ -111,16 +112,18 @@ cd '/home/user/tries' && \
 
 ### Path Containment
 
-- Deletions only happen within the tries base directory
-- The `cd` to tries base ensures relative paths stay contained
-- No symlink traversal outside tries directory
+- Deletions only happen within allowed root directories:
+  - Items from tries source must be within `TRY_PATH`
+  - Items from GitHub source must be within `GH_PATH` (when enabled)
+- Path validation occurs before script generation using `File.realpath` to resolve symlinks
+- Each item is validated against its appropriate root based on its source
+- No symlink traversal outside allowed directories
 
 ### PWD Handling
 
 - If shell's PWD is inside a directory being deleted:
-  - Script changes to tries base first
-  - Then performs deletion
-  - Attempts to restore PWD (which will fail gracefully)
+  - Script performs deletion using absolute paths
+  - Attempts to restore PWD (which will fail gracefully if PWD was deleted)
   - Falls back to $HOME
 
 ### Existence Check
