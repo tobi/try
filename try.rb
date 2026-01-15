@@ -198,6 +198,12 @@ class TrySelector
     @test_confirm = test_confirm
     @old_winch_handler = nil  # Store original SIGWINCH handler
     @needs_redraw = false
+    # Rename mode state
+    @rename_mode = false
+    @rename_entry = nil
+    @rename_buffer = ""
+    @rename_cursor_pos = 0
+    @rename_error = nil
 
     FileUtils.mkdir_p(@base_path) unless Dir.exist?(@base_path)
   end
@@ -383,6 +389,14 @@ class TrySelector
       render(tries)
 
       key = read_key
+      # nil means terminal resize - just re-render with new dimensions
+      next unless key
+
+      # Handle rename mode separately
+      if @rename_mode
+        break if handle_rename_key(key)
+        next
+      end
 
       case key
       when "\r"  # Enter (carriage return)
@@ -463,6 +477,10 @@ class TrySelector
       when "\x14"  # Ctrl-T - create new try (immediate)
         handle_create_new
         break if @selected
+      when "\x12"  # Ctrl-R - rename selected entry
+        if @cursor_pos < tries.length
+          start_rename(tries[@cursor_pos])
+        end
       when "\x03", "\e"  # Ctrl-C or ESC
         if @delete_mode
           # Exit delete mode, clear marks
@@ -666,15 +684,17 @@ class TrySelector
     # Instructions at bottom
     UI.puts "{dim}#{separator}{/fg}"
 
-    # Show delete status if present, otherwise show instructions
-    if @delete_status
+    # Show delete status, rename dialog, or instructions
+    if @rename_mode
+      render_rename_dialog(separator)
+    elsif @delete_status
       UI.puts "{b}#{@delete_status}{/b}"
       @delete_status = nil  # Clear after showing
     elsif @delete_mode
       count = @marked_for_deletion.length
       UI.puts "{strike} DELETE MODE {/strike} #{count} marked  |  Ctrl-D: Toggle  Enter: Confirm  Esc: Cancel"
     else
-      UI.puts "{dim}↑↓: Navigate  Enter: Select  Ctrl-T: New  Ctrl-D: Delete  Esc: Cancel{/fg}"
+      UI.puts "{dim}↑↓: Navigate  Enter: Select  Ctrl-T: New  Ctrl-D: Delete  Ctrl-R: Rename  Esc: Cancel{/fg}"
     end
 
     # Flush the double buffer
@@ -766,6 +786,119 @@ class TrySelector
     end
 
     result
+  end
+
+  # Rename mode methods
+  def start_rename(entry)
+    @rename_mode = true
+    @rename_entry = entry
+    @rename_buffer = entry[:basename].dup
+    @rename_cursor_pos = @rename_buffer.length
+    @rename_error = nil
+    @delete_mode = false
+    @marked_for_deletion.clear
+  end
+
+  def exit_rename
+    @rename_mode = false
+    @rename_entry = nil
+    @rename_buffer = ""
+    @rename_cursor_pos = 0
+    @rename_error = nil
+  end
+
+  def handle_rename_key(key)
+    case key
+    when "\r"  # Enter - confirm rename
+      return finalize_rename
+    when "\e", "\x03"  # ESC or Ctrl-C - cancel
+      exit_rename
+      return false
+    when "\x7F", "\b"  # Backspace
+      if @rename_cursor_pos > 0
+        @rename_buffer = @rename_buffer[0...(@rename_cursor_pos - 1)] + @rename_buffer[@rename_cursor_pos..-1].to_s
+        @rename_cursor_pos -= 1
+      end
+      @rename_error = nil
+    when "\x01"  # Ctrl-A - start of line
+      @rename_cursor_pos = 0
+    when "\x05"  # Ctrl-E - end of line
+      @rename_cursor_pos = @rename_buffer.length
+    when "\x02"  # Ctrl-B - back one char
+      @rename_cursor_pos = [@rename_cursor_pos - 1, 0].max
+    when "\x06"  # Ctrl-F - forward one char
+      @rename_cursor_pos = [@rename_cursor_pos + 1, @rename_buffer.length].min
+    when "\x0B"  # Ctrl-K - kill to end
+      @rename_buffer = @rename_buffer[0...@rename_cursor_pos]
+      @rename_error = nil
+    when "\x17"  # Ctrl-W - delete word backward
+      if @rename_cursor_pos > 0
+        pos = @rename_cursor_pos - 1
+        pos -= 1 while pos > 0 && @rename_buffer[pos] !~ /[a-zA-Z0-9]/
+        pos -= 1 while pos > 0 && @rename_buffer[pos - 1] =~ /[a-zA-Z0-9]/
+        @rename_buffer = @rename_buffer[0...pos] + @rename_buffer[@rename_cursor_pos..-1].to_s
+        @rename_cursor_pos = pos
+      end
+      @rename_error = nil
+    when String
+      if key.length == 1 && key =~ /[a-zA-Z0-9\-_\.\s\/]/
+        @rename_buffer = @rename_buffer[0...@rename_cursor_pos] + key + @rename_buffer[@rename_cursor_pos..-1].to_s
+        @rename_cursor_pos += 1
+        @rename_error = nil
+      end
+    end
+    false
+  end
+
+  def finalize_rename
+    new_name = @rename_buffer.strip.gsub(/\s+/, '-')
+    old_name = @rename_entry ? @rename_entry[:basename] : nil
+
+    if new_name.empty?
+      @rename_error = "Name cannot be empty"
+      return false
+    end
+
+    if new_name.include?('/')
+      @rename_error = "Name cannot contain /"
+      return false
+    end
+
+    if old_name && new_name == old_name
+      exit_rename
+      return false
+    end
+
+    if Dir.exist?(File.join(@base_path, new_name))
+      @rename_error = "Directory exists: #{new_name}"
+      return false
+    end
+
+    if old_name
+      @selected = { type: :rename, old: old_name, new: new_name, base_path: @base_path }
+    end
+    exit_rename
+    true
+  end
+
+  def render_rename_dialog(separator)
+    return unless @rename_mode && @rename_entry
+
+    UI.puts "{dim}#{separator}{/fg}"
+    UI.puts "{h2}📝 Rename{reset}"
+    UI.puts "Current: #{@rename_entry[:basename]}"
+
+    before = @rename_buffer[0...@rename_cursor_pos]
+    cursor_char = @rename_buffer[@rename_cursor_pos] || " "
+    after = @rename_buffer[(@rename_cursor_pos + 1)..-1] || ""
+    UI.puts "New name: #{before}\e[7m#{cursor_char}\e[27m#{after}"
+
+    if @rename_error
+      UI.puts "{b}#{@rename_error}{/b}"
+    end
+
+    UI.puts "{dim}Enter: Confirm  Esc: Cancel{/fg}"
+    UI.puts "{dim}#{separator}{/fg}"
   end
 
   def handle_selection(try_dir)
@@ -1064,6 +1197,7 @@ if __FILE__ == $0
         when 'CTRL-K', 'CTRLK' then keys << "\x0B"
         when 'CTRL-N', 'CTRLN' then keys << "\x0E"
         when 'CTRL-P', 'CTRLP' then keys << "\x10"
+        when 'CTRL-R', 'CTRLR' then keys << "\x12"
         when 'CTRL-T', 'CTRLT' then keys << "\x14"
         when 'CTRL-W', 'CTRLW' then keys << "\x17"
         when /^TYPE=(.*)$/
@@ -1170,8 +1304,8 @@ if __FILE__ == $0
       date_prefix = Time.now.strftime("%Y-%m-%d")
       base = resolve_unique_name_with_versioning(tries_path, date_prefix, base)
       full_path = File.join(tries_path, "#{date_prefix}-#{base}")
-      # Use worktree if .git exists, otherwise just mkdir
-      if File.directory?(File.join(repo_dir, '.git'))
+      # Use worktree if .git exists (file in worktrees, directory in regular repos)
+      if File.exist?(File.join(repo_dir, '.git'))
         return script_worktree(full_path, repo_dir)
       else
         return script_mkdir_cd(full_path)
@@ -1210,6 +1344,8 @@ if __FILE__ == $0
       script_delete(result[:paths], result[:base_path])
     when :mkdir
       script_mkdir_cd(result[:path])
+    when :rename
+      script_rename(result[:base_path], result[:old], result[:new])
     else
       script_cd(result[:path])
     end
@@ -1263,9 +1399,17 @@ if __FILE__ == $0
 
   def script_delete(paths, base_path)
     cmds = ["cd #{q(base_path)}"]
-    paths.each { |item| cmds << "[[ -d #{q(item[:basename])} ]] && rm -rf #{q(item[:basename])}" }
+    paths.each { |item| cmds << "test -d #{q(item[:basename])} && rm -rf #{q(item[:basename])}" }
     cmds << "( cd #{q(Dir.pwd)} 2>/dev/null || cd \"$HOME\" )"
     cmds
+  end
+
+  def script_rename(base_path, old_name, new_name)
+    [
+      "cd #{q(base_path)}",
+      "mv #{q(old_name)} #{q(new_name)}",
+      "cd #{q(File.join(base_path, new_name))}"
+    ]
   end
 
   # Return a unique directory name under tries_path by appending -2, -3, ... if needed
@@ -1303,8 +1447,12 @@ if __FILE__ == $0
   end
 
   # shell detection for init wrapper
+  # Check $SHELL first (user's configured shell), then parent process as fallback
   def fish?
-    ENV['SHELL']&.include?('fish')
+    shell = ENV["SHELL"]
+    shell = `ps c -p #{Process.ppid} -o 'ucomm='`.strip rescue nil if shell.to_s.empty?
+
+    shell&.include?('fish')
   end
 
 

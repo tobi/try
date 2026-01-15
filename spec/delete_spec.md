@@ -58,8 +58,8 @@ In exec mode, delete outputs a shell script that is evaluated by the shell wrapp
 
 ```sh
 cd '/path/to/tries' && \
-  [[ -d 'dir-name-1' ]] && rm -rf 'dir-name-1' && \
-  [[ -d 'dir-name-2' ]] && rm -rf 'dir-name-2' && \
+  test -d 'dir-name-1' ]] && rm -rf 'dir-name-1' && \
+  test -d 'dir-name-2' ]] && rm -rf 'dir-name-2' && \
   ( cd '/original/pwd' 2>/dev/null || cd "$HOME" )
 ```
 
@@ -75,7 +75,7 @@ Each command is on its own line, chained with `&& \` for readability, with 2-spa
 
 2. **Per-item delete commands**
    ```sh
-     [[ -d 'name' ]] && rm -rf 'name' && \
+     test -d 'name' ]] && rm -rf 'name' && \
    ```
    - Check directory exists before deletion
    - Use basename only (not full path)
@@ -102,8 +102,8 @@ For deleting two directories from `/home/user/tries`:
 ```sh
 # if you can read this, you didn't launch try from an alias. run try --help.
 cd '/home/user/tries' && \
-  [[ -d '2025-11-29-old-project' ]] && rm -rf '2025-11-29-old-project' && \
-  [[ -d '2025-11-28-abandoned' ]] && rm -rf '2025-11-28-abandoned' && \
+  test -d '2025-11-29-old-project' ]] && rm -rf '2025-11-29-old-project' && \
+  test -d '2025-11-28-abandoned' ]] && rm -rf '2025-11-28-abandoned' && \
   ( cd '/home/user/code' 2>/dev/null || cd "$HOME" )
 ```
 
@@ -125,7 +125,7 @@ cd '/home/user/tries' && \
 
 ### Existence Check
 
-- `[[ -d 'name' ]]` prevents errors on already-deleted directories
+- `test -d 'name' ]]` prevents errors on already-deleted directories
 - Safe for concurrent operations
 
 ## Visual Tokens

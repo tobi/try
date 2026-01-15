@@ -40,11 +40,11 @@ else
     fail "Delete script should cd to base dir" "cd 'path' &&" "$output" "delete_spec.md#script-components"
 fi
 
-# Test: Delete script uses [[ -d 'name' ]] check
-if echo "$output" | grep -q '\[\[ -d '; then
+# Test: Delete script uses test -d 'name' check (POSIX-compatible)
+if echo "$output" | grep -q 'test -d '; then
     pass
 else
-    fail "Delete script should check directory exists" "[[ -d 'name' ]]" "$output" "delete_spec.md#script-components"
+    fail "Delete script should check directory exists" "test -d 'name'" "$output" "delete_spec.md#script-components"
 fi
 
 # Test: Delete script ends with PWD restoration

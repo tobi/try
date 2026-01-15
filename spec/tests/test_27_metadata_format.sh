@@ -11,7 +11,8 @@ strip_ansi() {
 # Test: Score shows one decimal place
 output=$(try_run --path="$TEST_TRIES" --and-exit exec 2>&1)
 stripped=$(echo "$output" | strip_ansi)
-if echo "$stripped" | grep -qE "[0-9]+\.[0-9][^0-9]"; then
+# Match N.N format at end of line or followed by non-digit
+if echo "$stripped" | grep -qE "[0-9]+\.[0-9]([^0-9]|$)"; then
     pass
 else
     fail "score should have one decimal" "N.N format" "$output" "tui_spec.md#score-format"
