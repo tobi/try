@@ -60,17 +60,24 @@ try <url> [name]            # URL shorthand (same as clone)
 - `name` (optional): Custom name suffix (default: extracted from URL)
 
 **Behavior:**
-- Creates directory named `YYYY-MM-DD-<user>-<repo>` (extracted from URL)
-- Clones repository into that directory
+- **Default**: Creates directory named `YYYY-MM-DD-<user>-<repo>` (extracted from URL) under tries path
+- **With `GH_PATH` set**: For `github.com` URLs, creates directory at `$GH_PATH/<owner>/<repo>` (or `$GH_PATH/<owner>/<custom_name>` if custom name provided). If the directory already exists, just `cd`s into it without cloning.
+- Clones repository into that directory (unless it already exists when using `GH_PATH`)
 - Returns shell script to cd into cloned directory
 
 **Examples:**
 ```
 try clone https://github.com/tobi/try.git
-# Creates: 2025-11-30-tobi-try
+# Creates: 2025-11-30-tobi-try (default behavior)
+
+GH_PATH=~/github try clone https://github.com/tobi/try.git
+# Creates: ~/github/tobi/try (GitHub-specific path)
+
+GH_PATH=~/github try clone https://github.com/user/repo myproject
+# Creates: ~/github/user/myproject (custom name)
 
 try clone https://github.com/user/repo myproject
-# Creates: 2025-11-30-myproject (custom name overrides)
+# Creates: 2025-11-30-myproject (custom name overrides, default path)
 
 try https://github.com/tobi/try.git
 # URL shorthand (same as first example)
@@ -180,6 +187,7 @@ Commands are chained with `&& \` for readability, with 2-space indent on continu
 | `HOME` | Used to resolve default tries path (`$HOME/src/tries`) |
 | `SHELL` | Used by `init` to detect shell type |
 | `NO_COLOR` | If set, disables colors (equivalent to `--no-colors`) |
+| `GH_PATH` | If set, GitHub repositories are cloned to `$GH_PATH/<owner>/<repo>` instead of date-prefixed directories under tries path |
 
 ## Defaults
 
