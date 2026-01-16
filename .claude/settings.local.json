@@ -12,7 +12,9 @@
       "Bash(curl:*)",
       "Bash(cat:*)",
       "Bash(gem build:*)",
-      "Bash(gem push:*)"
+      "Bash(gem push:*)",
+      "Bash(git pull:*)",
+      "Bash(git stash:*)"
     ],
     "deny": [],
     "ask": []

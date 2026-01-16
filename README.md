@@ -1,5 +1,7 @@
 # try - fresh directories for every vibe
 
+**[Website](https://pages.tobi.lutke.com/try/)** · **[RubyGems](https://rubygems.org/gems/try-cli)** · **[GitHub](https://github.com/tobi/try)**
+
 *Your experiments deserve a home.* 🏠
 
 > For everyone who constantly creates new projects for little experiments, a one-file Ruby script to quickly manage and navigate to keep them somewhat organized
