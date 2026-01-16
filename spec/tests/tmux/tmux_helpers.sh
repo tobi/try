@@ -8,7 +8,7 @@ if ! command -v tmux &>/dev/null; then
 fi
 
 TUI_SESSION="try_test_$$"
-TUI_DELAY=0.01
+TUI_DELAY=0.05
 TUI_LAST_OUTPUT=""
 
 # Create session once, reuse for all tests
@@ -20,6 +20,8 @@ tmux set-option -t "$TUI_SESSION" remain-on-exit on
 trap 'tmux kill-session -t "$TUI_SESSION" 2>/dev/null || true' EXIT
 
 tui_start() {
+    # Clear cached output
+    TUI_LAST_OUTPUT=""
     # Respawn the pane to clear it
     tmux respawn-pane -t "$TUI_SESSION" -k "$1"
     sleep 0.5  # Let TUI initialize
@@ -38,12 +40,14 @@ tui_type() {
 }
 
 tui_capture() {
+    # Capture visible pane content (no scrollback needed for alternate screen buffer)
     TUI_LAST_OUTPUT=$(tmux capture-pane -t "$TUI_SESSION" -p 2>/dev/null)
     echo "$TUI_LAST_OUTPUT"
 }
 
 tui_wait() {
     sleep "${1:-0.5}"
+    TUI_LAST_OUTPUT=""
 }
 
 _tui_refresh() {

@@ -20,7 +20,7 @@ has_color() {
 
 # Test: Title uses header style (bold/color)
 output=$(try_run --path="$TEST_TRIES" --and-exit exec 2>&1)
-title_line=$(echo "$output" | grep "Try Selector")
+title_line=$(echo "$output" | grep "Try Directory Selection")
 if has_bold "$title_line" || has_color "$title_line"; then
     pass
 else

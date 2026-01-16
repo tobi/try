@@ -3,179 +3,10 @@
 require 'io/console'
 require 'time'
 require 'fileutils'
-
-# Lightweight token-based printer for all UI output with double buffering
-module UI
-  TOKEN_MAP = {
-    # Text formatting
-    '{b}' => "\e[1;33m",           # Bold + Yellow (highlighted text, fuzzy match chars)
-    '{/b}' => "\e[22m\e[39m",      # Reset bold + foreground
-    '{dim}' => "\e[90m",           # Gray (bright black) - secondary/de-emphasized text
-    '{text}' => "\e[0m\e[39m",     # Full reset - normal text
-    '{reset}' => "\e[0m\e[39m\e[49m",  # Complete reset of all formatting
-    '{/fg}' => "\e[39m",           # Reset foreground color only
-    # Headings
-    '{h1}' => "\e[1;38;5;208m",    # Bold + Orange (primary headings)
-    '{h2}' => "\e[1;34m",          # Bold + Blue (secondary headings)
-    # Selection
-    '{section}' => "\e[1m",        # Bold - start of selected/highlighted section
-    '{/section}' => "\e[0m",       # Full reset - end of selected section
-    # Strikethrough (for deleted items)
-    '{strike}' => "\e[48;5;52m",   # Dark red background
-    '{/strike}' => "\e[49m",       # Reset background
-    # Screen control
-    '{clear_screen}' => "\e[2J", '{clear_line}' => "\e[2K", '{home}' => "\e[H", '{clear_below}' => "\e[0J",
-    '{hide_cursor}' => "\e[?25l", '{show_cursor}' => "\e[?25h",
-    # Input cursor
-    '{cursor}' => "\e[7m \e[27m",  # Reverse video space as cursor block
-  }.freeze
-
-  @@buffer = []
-  @@last_buffer = []
-  @@current_line = ""
-
-  @@height = nil
-  @@width = nil
-  @@expand_tokens = true
-  @@force_colors = false  # Force color output even when not TTY (for testing)
-
-  def self.print(text, io: STDERR)
-    return if text.nil?
-    @@current_line += text
-  end
-
-  def self.puts(text = "", io: STDERR)
-    @@current_line += text
-    @@buffer << @@current_line
-    @@current_line = ""
-  end
-
-  def self.flush(io: STDERR)
-    # Always finalize the current line into the buffer
-    unless @@current_line.empty?
-      @@buffer << @@current_line
-      @@current_line = ""
-    end
-
-    # In non-TTY contexts (unless force_colors), print plain text without control codes
-    unless io.tty? || @@force_colors
-      plain = @@buffer.join("\n").gsub(/\{.*?\}/, '')
-      io.print(plain)
-      io.print("\n") unless plain.end_with?("\n")
-      @@last_buffer = []
-      @@buffer.clear
-      @@current_line = ""
-      io.flush
-      return
-    end
-
-    # TTY or force_colors mode: output with formatting
-    if io.tty?
-      # Position cursor at home for TTY
-      io.print("\e[H")
-    end
-
-    max_lines = [@@buffer.length, @@last_buffer.length].max
-    reset = TOKEN_MAP['{reset}']
-
-    (0...max_lines).each do |i|
-      current_line = @@buffer[i] || ""
-      last_line = @@last_buffer[i] || ""
-
-      if current_line != last_line || @@force_colors
-        # Move to line and clear it (only for TTY)
-        if io.tty?
-          io.print("\e[#{i + 1};1H\e[2K")
-        end
-        if !current_line.empty?
-          processed_line = expand_tokens(current_line)
-          io.print(processed_line)
-          io.print(reset) if @@expand_tokens
-          io.print("\n") if @@force_colors && !io.tty?
-        end
-      end
-    end
-
-    # Store current buffer as last buffer for next comparison
-    @@last_buffer = @@buffer.dup
-    @@buffer.clear
-    @@current_line = ""
-
-    io.flush
-  end
-
-  def self.cls(io: STDERR)
-    @@current_line = ""
-    @@buffer.clear
-    @@last_buffer.clear
-    io.print("\e[2J\e[H")  # Clear screen and go home
-  end
-
-  def self.hide_cursor
-    STDERR.print("\e[?25l")
-  end
-
-  def self.show_cursor
-    STDERR.print("\e[?25h")
-  end
-
-  def self.read_key
-    input = STDIN.getc
-
-    if input == "\e"
-      input << STDIN.read_nonblock(3) rescue ""
-      input << STDIN.read_nonblock(2) rescue ""
-    end
-
-    input
-  end
-
-  def self.height
-    @@height ||= begin
-      env_h = ENV['TRY_HEIGHT'].to_i
-      return env_h if env_h > 0
-      h = `tput lines 2>/dev/null`.strip.to_i
-      h > 0 ? h : 24
-    end
-  end
-
-  def self.width
-    @@width ||= begin
-      env_w = ENV['TRY_WIDTH'].to_i
-      return env_w if env_w > 0
-      w = `tput cols 2>/dev/null`.strip.to_i
-      w > 0 ? w : 80
-    end
-  end
-
-  def self.refresh_size
-    @@height = nil
-    @@width = nil
-  end
-
-  def self.disable_token_expansion
-    @@expand_tokens = false
-  end
-
-  def self.disable_colors
-    @@expand_tokens = false  # Disabling colors means tokens won't expand to ANSI
-  end
-
-  def self.force_colors
-    @@force_colors = true
-  end
-
-  # Expand tokens in a string to ANSI sequences
-  def self.expand_tokens(str)
-    return str unless @@expand_tokens
-    str.gsub(/\{.*?\}/) do |match|
-      TOKEN_MAP.fetch(match) { match }  # Leave unknown tokens unchanged
-    end
-  end
-
-end
+require_relative 'lib/tui'
 
 class TrySelector
+  include Tui::Helpers
   TRY_PATH = ENV['TRY_PATH'] || File.expand_path("~/src/tries")
 
   def initialize(search_term = "", base_path: TRY_PATH, initial_input: nil, test_render_once: false, test_no_cls: false, test_keys: nil, test_confirm: nil)
@@ -209,7 +40,7 @@ class TrySelector
   end
 
   def run
-    # Always use STDERR for UI (it stays connected to TTY)
+    # Always use STDERR for rendering (it stays connected to TTY)
     # This allows stdout to be captured for the shell commands
     setup_terminal
 
@@ -224,7 +55,7 @@ class TrySelector
     # Check if we have a TTY; allow tests with injected keys
     if !STDIN.tty? || !STDERR.tty?
       if @test_keys.nil? || @test_keys.empty?
-        UI.puts "Error: try requires an interactive terminal"
+        STDERR.puts "Error: try requires an interactive terminal"
         return nil
       end
       main_loop
@@ -241,23 +72,24 @@ class TrySelector
 
   def setup_terminal
     unless @test_no_cls
-      UI.cls
-      UI.hide_cursor
+      # Switch to alternate screen buffer (like vim, less, etc.)
+      STDERR.print(Tui::ANSI::ALT_SCREEN_ON)
+      STDERR.print(Tui::ANSI::CLEAR_SCREEN)
+      STDERR.print(Tui::ANSI::HOME)
+      STDERR.print(Tui::ANSI::CURSOR_BLINK)
     end
 
-    # Handle terminal resize
-    @old_winch_handler = Signal.trap('WINCH') do
-      @needs_redraw = true
-    end
+    @old_winch_handler = Signal.trap('WINCH') { @needs_redraw = true }
   end
 
   def restore_terminal
     unless @test_no_cls
-      UI.cls
-      UI.show_cursor
+      STDERR.print(Tui::ANSI::RESET)
+      STDERR.print(Tui::ANSI::CURSOR_DEFAULT)
+      # Return to main screen buffer
+      STDERR.print(Tui::ANSI::ALT_SCREEN_OFF)
     end
 
-    # Restore original SIGWINCH handler
     Signal.trap('WINCH', @old_winch_handler) if @old_winch_handler
   end
 
@@ -380,7 +212,7 @@ class TrySelector
   def main_loop
     loop do
       tries = get_tries
-      show_create_new = !@input_buffer.empty?
+      show_create_new = !@input_buffer.empty? && !@rename_mode
       total_items = tries.length + (show_create_new ? 1 : 0)
 
       # Ensure cursor is within bounds
@@ -514,191 +346,175 @@ class TrySelector
     loop do
       if @needs_redraw
         @needs_redraw = false
-        UI.refresh_size
-        UI.cls
+        clear_screen unless @test_no_cls
         return nil
       end
       ready = IO.select([STDIN], nil, nil, 0.1)
-      return UI.read_key if ready
+      return read_keypress if ready
     end
   end
 
+  def read_keypress
+    input = STDIN.getc
+    return nil if input.nil?
+
+    if input == "\e"
+      input << STDIN.read_nonblock(3) rescue ""
+      input << STDIN.read_nonblock(2) rescue ""
+    end
+
+    input
+  end
+
+  def clear_screen
+    STDERR.print("\e[2J\e[H")
+  end
+
+  def hide_cursor
+    STDERR.print(Tui::ANSI::HIDE)
+  end
+
+  def show_cursor
+    STDERR.print(Tui::ANSI::SHOW)
+  end
+
   def render(tries)
-    term_width = UI.width
-    term_height = UI.height
+    screen = Tui::Screen.new(io: STDERR)
+    width = screen.width
+    height = screen.height
+    input_label = @rename_mode ? "New name:" : "Search:"
+    placeholder = @rename_mode ? "Enter new name…" : "Type to filter…"
+    buffer = @rename_mode ? @rename_buffer : @input_buffer
+    cursor = @rename_mode ? @rename_cursor_pos : @input_cursor_pos
+    current_name = @rename_entry ? @rename_entry[:basename] : ""
 
-    # Use actual terminal width for separator lines
-    separator = "─" * (term_width - 1)
+    screen.header.add_line { |line| line.write << Tui::Text.accent("🏠 Try Directory Selection") }
+    screen.header.add_line { |line| line.write.write_dim(fill("─")) }
+    if @rename_mode
+      screen.header.add_line { |line| line.write.write_dim("Current: #{current_name}") }
+    end
+    screen.header.add_line do |line|
+      prefix = "#{input_label} "
+      line.write.write_dim(prefix)
+      line.write << screen.input("", value: buffer, cursor: cursor).to_s
+      line.mark_has_input(Tui::Metrics.visible_width(prefix))
+    end
+    screen.header.add_line { |line| line.write.write_dim(fill("─")) }
 
-    # Header
-    UI.puts "{h1}📁 Try Selector{reset}"
-    UI.puts "{dim}#{separator}{/fg}"
-
-    # Search input with cursor at correct position
-    before_cursor = @input_buffer[0...@input_cursor_pos]
-    char_at_cursor = @input_buffer[@input_cursor_pos] || " "
-    after_cursor = @input_buffer[(@input_cursor_pos + 1)..-1] || ""
-    # Render cursor by inverting the character at cursor position
-    UI.puts "{dim}Search:{/fg} {b}#{before_cursor}\e[7m#{char_at_cursor}\e[27m#{after_cursor}{/b}"
-    UI.puts "{dim}#{separator}{/fg}"
-
-    # Calculate visible window based on actual terminal height
-    max_visible = [term_height - 8, 3].max
-    show_create_new = !@input_buffer.empty?
+    max_visible = [height - 8, 3].max
+    show_create_new = !@input_buffer.empty? && !@rename_mode
     total_items = tries.length + (show_create_new ? 1 : 0)
 
-    # Adjust scroll window
     if @cursor_pos < @scroll_offset
       @scroll_offset = @cursor_pos
     elsif @cursor_pos >= @scroll_offset + max_visible
       @scroll_offset = @cursor_pos - max_visible + 1
     end
 
-    # Display items
     visible_end = [@scroll_offset + max_visible, total_items].min
 
     (@scroll_offset...visible_end).each do |idx|
-      # Add blank line before "Create new"
       if idx == tries.length && tries.any? && idx >= @scroll_offset
-        UI.puts
+        screen.body.add_line
       end
 
-      # Print cursor/selection indicator
-      is_selected = idx == @cursor_pos
-      UI.print(is_selected ? "{b}→ {/b}" : "  ")
-
-      # Display try directory or "Create new" option
       if idx < tries.length
-        try_dir = tries[idx]
-        is_marked = @marked_for_deletion.include?(try_dir[:path])
-        basename = try_dir[:basename]
-
-        # Calculate metadata
-        time_text = format_relative_time(try_dir[:mtime])
-        score_text = sprintf("%.1f", try_dir[:score])
-        meta_text = "#{time_text}, #{score_text}"
-        meta_width = meta_text.length + 1  # +1 for leading space
-
-        # Layout: "→ 📁 name                    meta" or "  📁 name..."
-        # prefix = 5 chars ("→ 📁 " or "  📁 ")
-        # Metadata is right-aligned. If name overlaps, metadata is hidden.
-        prefix_width = 5
-        meta_start = term_width - meta_width
-        max_name_for_meta = meta_start - prefix_width - 1  # -1 for min gap
-
-        # Max name width before truncation (leave 1 char at end)
-        max_name_width = term_width - prefix_width - 1
-
-        # Start strike formatting for marked items
-        UI.print "{strike}" if is_marked
-
-        # Render the folder/trash icon
-        UI.print(is_marked ? "🗑️  " : "📁 ")
-
-        # Start selection highlighting after icon
-        UI.print "{section}" if is_selected
-
-        # Format directory name with date styling
-        if basename =~ /^(\d{4}-\d{2}-\d{2})-(.+)$/
-          date_part = $1
-          name_part = $2
-          full_name = "#{date_part}-#{name_part}"
-
-          # Truncate only if exceeds terminal width
-          if full_name.length > max_name_width && max_name_width > 14
-            available_for_name = max_name_width - 11 - 1 - 1  # date + dash + ellipsis
-            name_part = name_part[0, available_for_name] + "…" if name_part.length > available_for_name + 1
-            full_name = "#{date_part}-#{name_part}"
-          end
-
-          # Render the date part (faint)
-          UI.print "{dim}#{date_part}{/fg}"
-
-          # Render the separator
-          separator_matches = !@input_buffer.empty? && @input_buffer.include?('-')
-          UI.print(separator_matches ? "{b}-{/b}" : "{dim}-{/fg}")
-
-          # Render the name part with match highlighting
-          if !@input_buffer.empty?
-            UI.print highlight_matches_for_selection(name_part, @input_buffer, is_selected)
-          else
-            UI.print name_part
-          end
-
-          display_text = full_name
-        else
-          # No date prefix
-          name = basename
-          if name.length > max_name_width && max_name_width > 2
-            name = name[0, max_name_width - 1] + "…"
-          end
-
-          if !@input_buffer.empty?
-            UI.print highlight_matches_for_selection(name, @input_buffer, is_selected)
-          else
-            UI.print name
-          end
-          display_text = name
-        end
-
-        UI.print "{/section}" if is_selected
-
-        # Show metadata if name doesn't overlap its position
-        if display_text.length <= max_name_for_meta
-          padding_needed = meta_start - prefix_width - display_text.length
-          UI.print " " * padding_needed
-          UI.print "{dim}#{meta_text}{/fg}"
-        end
-
-        UI.print "{/strike}" if is_marked
-
+        render_entry_line(screen, tries[idx], idx == @cursor_pos, width)
       else
-        # This is the "Create new" option
-        UI.print "{section}" if is_selected
-
-        date_prefix = Time.now.strftime("%Y-%m-%d")
-        display_text = if @input_buffer.empty?
-          "📂 Create new: #{date_prefix}-"
-        else
-          "📂 Create new: #{date_prefix}-#{@input_buffer}"
-        end
-
-        UI.print display_text
-
-        # Pad to full width
-        text_width = display_text.length
-        padding_needed = term_width - 3 - text_width  # -3 for arrow + space
-        UI.print " " * [padding_needed, 1].max
+        render_create_line(screen, idx == @cursor_pos, width)
       end
-
-      # End selection and reset all formatting
-      UI.puts
     end
 
-    # Scroll indicator if needed
-    if total_items > max_visible
-      UI.puts "{dim}#{separator}{/fg}"
-      UI.puts "{dim}[#{@scroll_offset + 1}-#{visible_end}/#{total_items}]{/fg}"
-    end
+    screen.footer.add_line { |line| line.write.write_dim(fill("─")) }
 
-    # Instructions at bottom
-    UI.puts "{dim}#{separator}{/fg}"
-
-    # Show delete status, rename dialog, or instructions
     if @rename_mode
-      render_rename_dialog(separator)
+      render_rename_footer(screen)
     elsif @delete_status
-      UI.puts "{b}#{@delete_status}{/b}"
-      @delete_status = nil  # Clear after showing
+      screen.footer.add_line { |line| line.write.write_bold(@delete_status) }
+      @delete_status = nil
     elsif @delete_mode
-      count = @marked_for_deletion.length
-      UI.puts "{strike} DELETE MODE {/strike} #{count} marked  |  Ctrl-D: Toggle  Enter: Confirm  Esc: Cancel"
+      screen.footer.add_line(background: Tui::Palette::DANGER_BG) do |line|
+        line.write.write_bold(" DELETE MODE ")
+        line.write << " #{@marked_for_deletion.length} marked  |  Ctrl-D: Toggle  Enter: Confirm  Esc: Cancel"
+      end
     else
-      UI.puts "{dim}↑↓: Navigate  Enter: Select  Ctrl-T: New  Ctrl-D: Delete  Ctrl-R: Rename  Esc: Cancel{/fg}"
+      screen.footer.add_line do |line|
+        line.center.write_dim("↑/↓: Navigate  Enter: Select  ^R: Rename  ^D: Delete  Esc: Cancel")
+      end
     end
 
-    # Flush the double buffer
-    UI.flush
+    screen.flush
+  end
+
+  def render_entry_line(screen, entry, is_selected, width)
+    is_marked = @marked_for_deletion.include?(entry[:path])
+    background = if is_selected
+      Tui::Palette::SELECTED_BG
+    elsif is_marked
+      Tui::Palette::DANGER_BG
+    end
+
+    line = screen.body.add_line(background: background)
+    line.write << (is_selected ? Tui::Text.bold("→ ") : "  ")
+    line.write << (is_marked ? "🗑️ " : "📁 ")
+
+    plain_name, rendered_name = formatted_entry_name(entry[:basename])
+    prefix_width = 5
+    max_name_width = width - prefix_width - 1
+
+    display_plain = plain_name
+    display_rendered = rendered_name
+    if plain_name.length > max_name_width && max_name_width > 2
+      display_plain = plain_name[0, max_name_width - 1] + "…"
+      display_rendered = truncate_with_ansi(rendered_name, max_name_width - 1) + "…"
+    end
+
+    line.write << display_rendered
+
+    meta_text = "#{format_relative_time(entry[:mtime])}, #{format('%.1f', entry[:score])}"
+    meta_width = meta_text.length + 1
+    max_name_for_meta = (width - meta_width - prefix_width - 1)
+    line.right.write_dim(meta_text) if display_plain.length <= max_name_for_meta
+  end
+
+  def render_create_line(screen, is_selected, width)
+    background = is_selected ? Tui::Palette::SELECTED_BG : nil
+    line = screen.body.add_line(background: background)
+    line.write << (is_selected ? Tui::Text.bold("→ ") : "  ")
+    date_prefix = Time.now.strftime("%Y-%m-%d")
+    label = if @input_buffer.empty?
+      "📂 Create new: #{date_prefix}-"
+    else
+      "📂 Create new: #{date_prefix}-#{@input_buffer}"
+    end
+    line.write << label
+  end
+
+  def render_rename_footer(screen)
+    current = @rename_entry ? @rename_entry[:basename] : ""
+    screen.footer.add_line { |line| line.write.write_bold("📝 Renaming #{current}") }
+    screen.footer.add_line { |line| line.center.write_dim("Enter: Confirm  Esc: Cancel") }
+    if @rename_error
+      screen.footer.add_line { |line| line.write.write_bold(@rename_error) }
+    end
+  end
+
+  def formatted_entry_name(basename)
+    query = @input_buffer
+    if basename =~ /^(\d{4}-\d{2}-\d{2})-(.+)$/
+      date_part = $1
+      name_part = $2
+      rendered = Tui::Text.dim(date_part)
+      rendered += if !query.empty? && query.include?('-')
+        Tui::Text.bold('-')
+      else
+        Tui::Text.dim('-')
+      end
+      rendered += highlight_matches(name_part, query)
+      ["#{date_part}-#{name_part}", rendered]
+    else
+      [basename, highlight_matches(basename, query)]
+    end
   end
 
 
@@ -747,7 +563,7 @@ class TrySelector
   end
 
   def highlight_matches(text, query)
-    return text if query.empty?
+    return text if query.nil? || query.empty?
 
     result = ""
     text_lower = text.downcase
@@ -757,28 +573,7 @@ class TrySelector
 
     text.chars.each_with_index do |char, i|
       if query_index < query_chars.length && text_lower[i] == query_chars[query_index]
-        result += "{b}#{char}{/b}"  # Bold yellow for matches
-        query_index += 1
-      else
-        result += char
-      end
-    end
-
-    result
-  end
-
-  def highlight_matches_for_selection(text, query, is_selected)
-    return text if query.empty?
-
-    result = ""
-    text_lower = text.downcase
-    query_lower = query.downcase
-    query_chars = query_lower.chars
-    query_index = 0
-
-    text.chars.each_with_index do |char, i|
-      if query_index < query_chars.length && text_lower[i] == query_chars[query_index]
-        result += "{b}#{char}{/b}"  # Bold yellow for matches
+        result += Tui::Text.bold(char)
         query_index += 1
       else
         result += char
@@ -881,26 +676,6 @@ class TrySelector
     true
   end
 
-  def render_rename_dialog(separator)
-    return unless @rename_mode && @rename_entry
-
-    UI.puts "{dim}#{separator}{/fg}"
-    UI.puts "{h2}📝 Rename{reset}"
-    UI.puts "Current: #{@rename_entry[:basename]}"
-
-    before = @rename_buffer[0...@rename_cursor_pos]
-    cursor_char = @rename_buffer[@rename_cursor_pos] || " "
-    after = @rename_buffer[(@rename_cursor_pos + 1)..-1] || ""
-    UI.puts "New name: #{before}\e[7m#{cursor_char}\e[27m#{after}"
-
-    if @rename_error
-      UI.puts "{b}#{@rename_error}{/b}"
-    end
-
-    UI.puts "{dim}Enter: Confirm  Esc: Cancel{/fg}"
-    UI.puts "{dim}#{separator}{/fg}"
-  end
-
   def handle_selection(try_dir)
     # Select existing try directory
     @selected = { type: :cd, path: try_dir[:path] }
@@ -917,31 +692,30 @@ class TrySelector
       @selected = { type: :mkdir, path: full_path }
     else
       # No name typed, prompt for one
-      suggested_name = ""
-
-      UI.cls  # Clear screen using UI system
-      UI.puts "{h2}Enter new try name"
-      UI.puts
-      UI.puts "> {dim}#{date_prefix}-{/fg}"
-      UI.flush
-      STDERR.print("\e[?25h")
-
       entry = ""
-      # Read user input in cooked mode
-      STDERR.cooked do
-        STDIN.iflush
-        entry = gets.chomp
+      begin
+        clear_screen unless @test_no_cls
+        show_cursor
+        STDERR.puts "Enter new try name"
+        STDERR.puts
+        STDERR.print("> #{date_prefix}-")
+        STDERR.flush
+
+        STDERR.cooked do
+          STDIN.iflush
+          entry = STDIN.gets&.chomp.to_s
+        end
+      ensure
+        hide_cursor unless @test_no_cls
       end
 
-      if entry.empty?
-        return { type: :cancel, path: nil  }
-      end
+      return if entry.nil? || entry.empty?
 
       final_name = "#{date_prefix}-#{entry}".gsub(/\s+/, '-')
       full_path = File.join(@base_path, final_name)
 
       @selected = { type: :mkdir, path: full_path }
-    end
+      end
   end
 
   def confirm_batch_delete(tries)
@@ -949,38 +723,90 @@ class TrySelector
     marked_items = tries.select { |t| @marked_for_deletion.include?(t[:path]) }
     return if marked_items.empty?
 
-    # Show delete confirmation dialog
-    UI.cls
-    UI.puts "{h2}Delete #{marked_items.length} Director#{marked_items.length == 1 ? 'y' : 'ies'}{reset}"
-    UI.puts
+    confirmation_buffer = ""
+    confirmation_cursor = 0
 
-    marked_items.each do |item|
-      UI.puts "  {strike}📁 #{item[:basename]}{/strike}"
-    end
-
-    UI.puts
-    UI.puts "{b}Type {/b}YES{b} to confirm deletion: {/b}"
-    UI.flush
-    STDERR.print("\e[?25h")  # Show cursor after flushing
-
-    # Confirmation input: in tests, read from test_keys; otherwise read from TTY
-    confirmation = ""
+    # Handle test mode
     if @test_keys && !@test_keys.empty?
-      # Read chars from test_keys until Enter
       while @test_keys && !@test_keys.empty?
         ch = @test_keys.shift
         break if ch == "\r" || ch == "\n"
-        confirmation += ch
+        confirmation_buffer << ch
+        confirmation_cursor = confirmation_buffer.length
       end
+      process_delete_confirmation(marked_items, confirmation_buffer)
+      return
     elsif @test_confirm || !STDERR.tty?
-      confirmation = (@test_confirm || STDIN.gets)&.chomp.to_s
-    else
-      STDERR.cooked do
-        STDIN.iflush
-        confirmation = gets.chomp
+      confirmation_buffer = (@test_confirm || STDIN.gets)&.chomp.to_s
+      process_delete_confirmation(marked_items, confirmation_buffer)
+      return
+    end
+
+    # Interactive delete confirmation dialog
+    # Clear screen once before dialog to ensure clean slate
+    clear_screen unless @test_no_cls
+    loop do
+      render_delete_dialog(marked_items, confirmation_buffer, confirmation_cursor)
+
+      ch = read_key
+      case ch
+      when "\r"  # Enter - confirm
+        process_delete_confirmation(marked_items, confirmation_buffer)
+        break
+      when "\e"  # Escape - cancel
+        @delete_status = "Delete cancelled"
+        @marked_for_deletion.clear
+        @delete_mode = false
+        break
+      when "\x7F", "\b"  # Backspace
+        if confirmation_cursor > 0
+          confirmation_buffer = confirmation_buffer[0...confirmation_cursor-1] + confirmation_buffer[confirmation_cursor..]
+          confirmation_cursor -= 1
+        end
+      when "\x03"  # Ctrl-C
+        @delete_status = "Delete cancelled"
+        @marked_for_deletion.clear
+        @delete_mode = false
+        break
+      when String
+        if ch.length == 1 && ch.ord >= 32
+          confirmation_buffer = confirmation_buffer[0...confirmation_cursor] + ch + confirmation_buffer[confirmation_cursor..]
+          confirmation_cursor += 1
+        end
       end
     end
 
+    @needs_redraw = true
+  end
+
+  def render_delete_dialog(marked_items, confirmation_buffer, confirmation_cursor)
+    screen = Tui::Screen.new(io: STDERR)
+
+    count = marked_items.length
+    screen.header.add_line do |line|
+      line.write << Tui::Text.accent("🗑️  Delete #{count} #{count == 1 ? 'directory' : 'directories'}?")
+    end
+    screen.header.add_line { |line| line.write.write_dim(fill("─")) }
+
+    marked_items.each do |item|
+      screen.body.add_line(background: Tui::Palette::DANGER_BG) do |line|
+        line.write << "  🗑️ #{item[:basename]}"
+      end
+    end
+
+    screen.footer.add_line { |line| line.write.write_dim(fill("─")) }
+    screen.footer.add_line do |line|
+      prefix = "Type YES to confirm: "
+      line.write.write_dim(prefix)
+      line.write << screen.input("", value: confirmation_buffer, cursor: confirmation_cursor).to_s
+      line.mark_has_input(Tui::Metrics.visible_width(prefix))
+    end
+    screen.footer.add_line { |line| line.center.write_dim("Enter: Confirm  Esc: Cancel") }
+
+    screen.flush
+  end
+
+  def process_delete_confirmation(marked_items, confirmation)
     if confirmation == "YES"
       begin
         base_real = File.realpath(@base_path)
@@ -998,7 +824,7 @@ class TrySelector
         # Return delete action with all paths
         @selected = { type: :delete, paths: validated_paths, base_path: base_real }
         names = validated_paths.map { |p| p[:basename] }.join(", ")
-        @delete_status = "Deleted: {strike}#{names}{/strike}"
+        @delete_status = "Deleted: #{names}"
         @all_tries = nil  # Clear cache
         @marked_for_deletion.clear
         @delete_mode = false
@@ -1010,9 +836,6 @@ class TrySelector
       @marked_for_deletion.clear
       @delete_mode = false
     end
-
-    # Hide cursor again for main UI
-    STDERR.print("\e[?25l")
   end
 end
 
@@ -1023,66 +846,49 @@ if __FILE__ == $0
 
   def print_global_help
     text = <<~HELP
-      {h1}try{reset} v#{VERSION} - ephemeral workspace manager
+      try v#{VERSION} - ephemeral workspace manager
 
       To use try, add to your shell config:
 
-        {dim}# bash/zsh (~/.bashrc or ~/.zshrc){/fg}
-        {b}eval "$(try init ~/src/tries)"{/b}
+        # bash/zsh (~/.bashrc or ~/.zshrc)
+        eval "$(try init ~/src/tries)"
 
-        {dim}# fish (~/.config/fish/config.fish){/fg}
-        {b}eval (try init ~/src/tries | string collect){/b}
+        # fish (~/.config/fish/config.fish)
+        eval (try init ~/src/tries | string collect)
 
-      {h2}Usage:{reset}
+      Usage:
         try [query]           Interactive directory selector
         try clone <url>       Clone repo into dated directory
         try worktree <name>   Create worktree from current git repo
         try --help            Show this help
 
-      {h2}Commands:{reset}
+      Commands:
         init [path]           Output shell function definition
         clone <url> [name]    Clone git repo into date-prefixed directory
         worktree <name>       Create worktree in dated directory
 
-      {h2}Examples:{reset}
+      Examples:
         try                   Open interactive selector
         try project           Selector with initial filter
         try clone https://github.com/user/repo
         try worktree feature-branch
 
-      {h2}Manual mode (without alias):{reset}
+      Manual mode (without alias):
         try exec [query]      Output shell script to eval
 
-      {h2}Defaults:{reset}
-        Default path: {dim}~/src/tries{/fg}
-        Current: {dim}#{TrySelector::TRY_PATH}{/fg}
+      Defaults:
+        Default path: ~/src/tries
+        Current: #{TrySelector::TRY_PATH}
     HELP
-    # Help should not manipulate the screen; print plainly to STDOUT.
-    # Expand tokens to ANSI when TTY, strip when not TTY (unless --no-expand-tokens keeps them)
-    out = UI.expand_tokens(text)
-    # If tokens weren't expanded (no-expand mode), keep them. Otherwise strip if non-tty.
-    if STDOUT.tty? || out.include?('{')
-      # TTY or tokens preserved by no-expand mode
-    else
-      out = text.gsub(/\{.*?\}/, '')
-    end
-    STDOUT.print(out)
+    STDOUT.print(text)
   end
 
   # Process color-related flags early
-  if ARGV.delete('--no-expand-tokens')
-    UI.disable_token_expansion
-  end
+  disable_colors = ARGV.delete('--no-colors')
+  disable_colors ||= ARGV.delete('--no-expand-tokens')
 
-  # --no-colors disables ANSI color output
-  if ARGV.delete('--no-colors')
-    UI.disable_colors
-  end
-
-  # NO_COLOR environment variable disables colors (standard convention)
-  if ENV['NO_COLOR'] && !ENV['NO_COLOR'].empty?
-    UI.disable_colors
-  end
+  Tui.disable_colors! if disable_colors
+  Tui.disable_colors! if ENV['NO_COLOR'] && !ENV['NO_COLOR'].empty?
 
   # Global help: show for --help/-h anywhere
   if ARGV.include?("--help") || ARGV.include?("-h")
@@ -1160,11 +966,6 @@ if __FILE__ == $0
   and_keys_raw = extract_option_with_value!(ARGV, '--and-keys')
   and_confirm = extract_option_with_value!(ARGV, '--and-confirm')
   # Note: --no-expand-tokens and --no-colors are processed early (before --help check)
-
-  # Enable color output in test mode for proper output verification
-  if and_exit || and_keys_raw
-    UI.force_colors
-  end
 
   command = ARGV.shift
 
@@ -1383,7 +1184,7 @@ if __FILE__ == $0
   end
 
   def script_clone(path, uri)
-    ["mkdir -p #{q(path)}", "echo #{q(UI.expand_tokens("Using {b}git clone{/b} to create this trial from #{uri}."))}", "git clone '#{uri}' #{q(path)}"] + script_cd(path)
+    ["mkdir -p #{q(path)}", "echo #{q("Using git clone to create this trial from #{uri}.")}", "git clone '#{uri}' #{q(path)}"] + script_cd(path)
   end
 
   def script_worktree(path, repo = nil)
@@ -1394,7 +1195,7 @@ if __FILE__ == $0
       "/usr/bin/env sh -c 'if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then repo=$(git rev-parse --show-toplevel); git -C \"$repo\" worktree add --detach #{q(path)} >/dev/null 2>&1 || true; fi; exit 0'"
     end
     src = repo || Dir.pwd
-    ["mkdir -p #{q(path)}", "echo #{q(UI.expand_tokens("Using {b}git worktree{/b} to create this trial from #{src}."))}", worktree_cmd] + script_cd(path)
+    ["mkdir -p #{q(path)}", "echo #{q("Using git worktree to create this trial from #{src}.")}", worktree_cmd] + script_cd(path)
   end
 
   def script_delete(paths, base_path)
