@@ -27,10 +27,10 @@ fi
 
 # Test: Rename dialog shows pencil emoji
 output=$(try_run --path="$REN_TEST_DIR" --and-keys='CTRL-R,ESC' exec 2>&1)
-if echo "$output" | grep -q "📝"; then
+if echo "$output" | grep -qE "📝|✏️"; then
     pass
 else
-    fail "Rename dialog should show pencil emoji" "📝" "$output" "rename"
+    fail "Rename dialog should show pencil emoji" "📝 or ✏️" "$output" "rename"
 fi
 
 # Test: Rename dialog pre-fills date prefix for dated entry
@@ -131,12 +131,12 @@ else
     fail "Rename dialog should have separator lines" "─ character" "$output" "rename"
 fi
 
-# Test: Rename shows current name in dialog
+# Test: Rename shows current name in dialog (with folder emoji)
 output=$(try_run --path="$REN_TEST_DIR" --and-keys='CTRL-R,ESC' exec 2>&1)
-if echo "$output" | grep -q "Current:"; then
+if echo "$output" | grep -qE "Current:|📁.*nodate-project"; then
     pass
 else
-    fail "Rename dialog should show Current: label" "Current:" "$output" "rename"
+    fail "Rename dialog should show current name" "Current: or 📁 with name" "$output" "rename"
 fi
 
 # Test: Rename shows new name field

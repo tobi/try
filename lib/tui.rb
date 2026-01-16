@@ -415,8 +415,14 @@ module Tui
       # Use \r to position at column 0, clear line, fill with spaces for reliability
       gap = body_space - body_rendered
       blank_line = "\r#{ANSI::CLEAR_EOL}#{' ' * (@width - 1)}\n"
-      gap.times do
-        @io.write(blank_line)
+      blank_line_no_newline = "\r#{ANSI::CLEAR_EOL}#{' ' * (@width - 1)}"
+      gap.times do |i|
+        # Last gap line without newline if no footer follows
+        if i == gap - 1 && @footer.lines.empty?
+          @io.write(blank_line_no_newline)
+        else
+          @io.write(blank_line)
+        end
         current_row += 1
       end
 

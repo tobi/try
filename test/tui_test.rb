@@ -37,7 +37,7 @@ class TuiTextTest < TuiTestCase
   def test_accent_and_highlight_helpers
     enable_colors!
     assert_includes Tui::Text.accent("wow"), Tui::Palette::ACCENT
-    assert_includes Tui::Text.highlight("hit"), Tui::Palette::MATCH
+    assert_includes Tui::Text.highlight("hit"), Tui::Palette::HIGHLIGHT
   end
 end
 
@@ -101,7 +101,7 @@ class SegmentWriterTest < TuiTestCase
     writer.write_highlight("H")
     output = writer.to_s
     assert_includes output, Tui::ANSI::BOLD
-    assert_includes output, Tui::Palette::MATCH
+    assert_includes output, Tui::Palette::HIGHLIGHT
   end
 
   def test_fill_fills_remaining_width

@@ -1,0 +1,20 @@
+GEM
+  remote: https://rubygems.org/
+  specs:
+    base64 (0.3.0)
+    minitest (5.27.0)
+    rake (13.3.1)
+    ruby-prof (1.7.2)
+      base64
+
+PLATFORMS
+  arm64-darwin-23
+  ruby
+
+DEPENDENCIES
+  minitest (~> 5.0)
+  rake
+  ruby-prof (~> 1.7)
+
+BUNDLED WITH
+   2.6.2

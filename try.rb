@@ -363,10 +363,11 @@ class TrySelector
 
   def render_entry_line(screen, entry, is_selected, width)
     is_marked = @marked_for_deletion.include?(entry[:path])
-    background = if is_selected
-      Tui::Palette::SELECTED_BG
-    elsif is_marked
+    # Marked items always show red; selection shows via arrow only
+    background = if is_marked
       Tui::Palette::DANGER_BG
+    elsif is_selected
+      Tui::Palette::SELECTED_BG
     end
 
     line = screen.body.add_line(background: background)
@@ -559,7 +560,13 @@ class TrySelector
       prefix = "New name: "
       line.center.write_dim(prefix)
       line.center << screen.input("", value: rename_buffer, cursor: rename_cursor).to_s
-      line.mark_has_input((screen.width - Tui::Metrics.visible_width(prefix) - rename_buffer.length) / 2 + Tui::Metrics.visible_width(prefix))
+      # Input displays buffer + trailing space when cursor at end
+      # Use (width - 1) to match Line.render's max_content calculation
+      input_width = [rename_buffer.length, rename_cursor + 1].max
+      prefix_width = Tui::Metrics.visible_width(prefix)
+      max_content = screen.width - 1
+      center_start = (max_content - prefix_width - input_width) / 2
+      line.mark_has_input(center_start + prefix_width)
     end
 
     if rename_error
@@ -710,7 +717,13 @@ class TrySelector
       prefix = "Type YES to confirm: "
       line.center.write_dim(prefix)
       line.center << screen.input("", value: confirmation_buffer, cursor: confirmation_cursor).to_s
-      line.mark_has_input((screen.width - Tui::Metrics.visible_width(prefix) - confirmation_buffer.length) / 2 + Tui::Metrics.visible_width(prefix))
+      # Input displays buffer + trailing space when cursor at end
+      # Use (width - 1) to match Line.render's max_content calculation
+      input_width = [confirmation_buffer.length, confirmation_cursor + 1].max
+      prefix_width = Tui::Metrics.visible_width(prefix)
+      max_content = screen.width - 1
+      center_start = (max_content - prefix_width - input_width) / 2
+      line.mark_has_input(center_start + prefix_width)
     end
 
     screen.footer.add_line { |line| line.write.write_dim(fill("─")) }
@@ -756,7 +769,7 @@ end
 # Main execution with OptionParser subcommands
 if __FILE__ == $0
 
-  VERSION = "1.7.0"
+  VERSION = "1.7.1"
 
   def print_global_help
     text = <<~HELP
@@ -1120,10 +1133,12 @@ if __FILE__ == $0
   end
 
   def script_rename(base_path, old_name, new_name)
+    new_path = File.join(base_path, new_name)
     [
       "cd #{q(base_path)}",
       "mv #{q(old_name)} #{q(new_name)}",
-      "cd #{q(File.join(base_path, new_name))}"
+      "echo #{q(new_path)}",
+      "cd #{q(new_path)}"
     ]
   end
 
