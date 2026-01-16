@@ -95,26 +95,69 @@ module Tui
   module Metrics
     module_function
 
+    # Optimized width calculation - avoids per-character method calls
     def visible_width(text)
-      stripped = text.gsub(/\e\[[0-9;]*[A-Za-z]/, '')
-      stripped.each_char.sum do |ch|
-        if zero_width?(ch)
-          0
-        elsif wide?(ch)
-          2
-        else
-          1
-        end
+      # Fast path: pure ASCII with no escapes
+      if text.bytesize == text.length && !text.include?("\e")
+        return text.length
       end
+
+      # Strip ANSI escapes only if present
+      stripped = text.include?("\e") ? text.gsub(/\e\[[0-9;]*[A-Za-z]/, '') : text
+
+      # Fast path after stripping: pure ASCII
+      if stripped.bytesize == stripped.length
+        return stripped.length
+      end
+
+      # Slow path: calculate width per codepoint (avoids each_char + ord)
+      width = 0
+      stripped.each_codepoint do |code|
+        width += char_width(code)
+      end
+      width
+    end
+
+    # Combined width check - single method call per character
+    def char_width(code)
+      # Fast path: ASCII printable (most common)
+      return 1 if code >= 0x20 && code <= 0x7E
+
+      # Zero-width characters
+      return 0 if (code >= 0xFE00 && code <= 0xFE0F) ||   # Variation Selectors
+                  (code >= 0x200B && code <= 0x200D) ||   # Zero-width space, ZWNJ, ZWJ
+                  (code >= 0x0300 && code <= 0x036F) ||   # Combining Diacritical Marks
+                  (code >= 0xE0100 && code <= 0xE01EF)    # Variation Selectors Supplement
+
+      # Wide characters (2-width)
+      return 2 if (code >= 0x1100 && code <= 0x115F) ||   # Hangul Jamo
+                  (code >= 0x231A && code <= 0x23FF) ||   # Miscellaneous Technical
+                  (code >= 0x2600 && code <= 0x26FF) ||   # Miscellaneous Symbols
+                  (code >= 0x2700 && code <= 0x27BF) ||   # Dingbats
+                  (code >= 0x2E80 && code <= 0x9FFF) ||   # CJK
+                  (code >= 0xAC00 && code <= 0xD7AF) ||   # Hangul Syllables
+                  (code >= 0xF900 && code <= 0xFAFF) ||   # CJK Compatibility Ideographs
+                  (code >= 0xFE10 && code <= 0xFE1F) ||   # Vertical forms
+                  (code >= 0xFE30 && code <= 0xFE6F) ||   # CJK Compatibility Forms
+                  (code >= 0xFF00 && code <= 0xFF60) ||   # Fullwidth Forms
+                  (code >= 0xFFE0 && code <= 0xFFE6) ||   # Fullwidth symbols
+                  (code >= 0x1F300 && code <= 0x1F9FF) || # Emojis
+                  (code >= 0x1FA00 && code <= 0x1FAFF) || # Chess symbols, Extended-A
+                  (code >= 0x20000 && code <= 0x2FFFF)    # CJK Extension B+
+
+      1 # Default width
     end
 
     def zero_width?(ch)
       code = ch.ord
-      # Zero-width characters: variation selectors, combining marks, ZWJ, etc.
-      (code >= 0xFE00 && code <= 0xFE0F) ||   # Variation Selectors
-      (code >= 0x200B && code <= 0x200D) ||   # Zero-width space, ZWNJ, ZWJ
-      (code >= 0x0300 && code <= 0x036F) ||   # Combining Diacritical Marks
-      (code >= 0xE0100 && code <= 0xE01EF)    # Variation Selectors Supplement
+      (code >= 0xFE00 && code <= 0xFE0F) ||
+      (code >= 0x200B && code <= 0x200D) ||
+      (code >= 0x0300 && code <= 0x036F) ||
+      (code >= 0xE0100 && code <= 0xE01EF)
+    end
+
+    def wide?(ch)
+      char_width(ch.ord) == 2
     end
 
     def truncate(text, max_width, overflow: "…")
@@ -130,7 +173,7 @@ module Tui
       text.each_char do |ch|
         if in_escape
           escape_buf << ch
-          if ch =~ /[A-Za-z]/
+          if ch.match?(/[A-Za-z]/)
             truncated << escape_buf
             escape_buf = String.new
             in_escape = false
@@ -144,34 +187,14 @@ module Tui
           next
         end
 
-        char_width = wide?(ch) ? 2 : 1
-        break if width + char_width > target
+        cw = char_width(ch.ord)
+        break if width + cw > target
 
         truncated << ch
-        width += char_width
+        width += cw
       end
 
       truncated.rstrip + overflow
-    end
-
-    def wide?(ch)
-      code = ch.ord
-      # CJK characters, full-width forms, emojis, and other wide characters
-      # Excludes box drawing (0x2500-0x257F) and other single-width symbols
-      (code >= 0x1100 && code <= 0x115F) ||   # Hangul Jamo
-      (code >= 0x231A && code <= 0x23FF) ||   # Miscellaneous Technical (some wide)
-      (code >= 0x2600 && code <= 0x26FF) ||   # Miscellaneous Symbols
-      (code >= 0x2700 && code <= 0x27BF) ||   # Dingbats
-      (code >= 0x2E80 && code <= 0x9FFF) ||   # CJK
-      (code >= 0xAC00 && code <= 0xD7AF) ||   # Hangul Syllables
-      (code >= 0xF900 && code <= 0xFAFF) ||   # CJK Compatibility Ideographs
-      (code >= 0xFE10 && code <= 0xFE1F) ||   # Vertical forms
-      (code >= 0xFE30 && code <= 0xFE6F) ||   # CJK Compatibility Forms
-      (code >= 0xFF00 && code <= 0xFF60) ||   # Fullwidth Forms
-      (code >= 0xFFE0 && code <= 0xFFE6) ||   # Fullwidth symbols
-      (code >= 0x1F300 && code <= 0x1F9FF) || # Emojis (Misc Symbols, Emoticons, etc.)
-      (code >= 0x1FA00 && code <= 0x1FAFF) || # Chess symbols, Extended-A
-      (code >= 0x20000 && code <= 0x2FFFF)    # CJK Extension B+
     end
   end
 
