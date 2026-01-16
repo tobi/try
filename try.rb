@@ -388,7 +388,7 @@ class TrySelector
     cursor = @rename_mode ? @rename_cursor_pos : @input_cursor_pos
     current_name = @rename_entry ? @rename_entry[:basename] : ""
 
-    screen.header.add_line { |line| line.write << Tui::Text.accent("🏠 Try Directory Selection") }
+    screen.header.add_line { |line| line.write << emoji("🏠") << Tui::Text.accent(" Try Directory Selection") }
     screen.header.add_line { |line| line.write.write_dim(fill("─")) }
     if @rename_mode
       screen.header.add_line { |line| line.write.write_dim("Current: #{current_name}") }
@@ -456,7 +456,7 @@ class TrySelector
 
     line = screen.body.add_line(background: background)
     line.write << (is_selected ? Tui::Text.bold("→ ") : "  ")
-    line.write << (is_marked ? "🗑️ " : "📁 ")
+    line.write << (is_marked ? emoji("🗑️") : emoji("📁")) << " "
 
     plain_name, rendered_name = formatted_entry_name(entry[:basename])
     prefix_width = 5
@@ -784,13 +784,13 @@ class TrySelector
 
     count = marked_items.length
     screen.header.add_line do |line|
-      line.write << Tui::Text.accent("🗑️  Delete #{count} #{count == 1 ? 'directory' : 'directories'}?")
+      line.write << emoji("🗑️") << Tui::Text.accent("  Delete #{count} #{count == 1 ? 'directory' : 'directories'}?")
     end
     screen.header.add_line { |line| line.write.write_dim(fill("─")) }
 
     marked_items.each do |item|
       screen.body.add_line(background: Tui::Palette::DANGER_BG) do |line|
-        line.write << "  🗑️ #{item[:basename]}"
+        line.write << "  " << emoji("🗑️") << " #{item[:basename]}"
       end
     end
 

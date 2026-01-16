@@ -3,9 +3,9 @@
 
 section "ansi-sequences"
 
-# Helper: Check for escape sequence by converting to visible form
+# Helper: Check for escape sequence (search raw bytes)
 has_seq() {
-    printf '%s' "$1" | cat -v | grep -q "$2"
+    printf '%s' "$1" | grep -qE "$2"
 }
 
 # Note: In test mode (--and-exit), cursor/screen control sequences are intentionally skipped
@@ -61,7 +61,8 @@ fi
 
 # Test: Bold attribute for highlights
 output=$(try_run --path="$TEST_TRIES" --and-exit exec 2>&1)
-if has_seq "$output" '\[1m\|\[1;'; then
+# Search for ESC[1m or ESC[1; (bold attribute)
+if printf '%s' "$output" | grep -qE $'\x1b\\[1m|\x1b\\[1;'; then
     pass
 else
     fail "should use bold" "[1m sequence" "$output" "tui_spec.md#bold-style"

@@ -226,6 +226,11 @@ module Tui
     def fill(char = " ")
       SegmentWriter::FillSegment.new(char.to_s)
     end
+
+    # Use for emoji characters - precomputes width and enables fast-path
+    def emoji(char)
+      SegmentWriter::EmojiSegment.new(char)
+    end
   end
 
   class Terminal
@@ -437,10 +442,10 @@ module Tui
 
       left_text = Metrics.truncate(left_text, content_width) if @truncate && !left_text.empty?
 
-      # Calculate widths
-      left_width = left_text.empty? ? 0 : Metrics.visible_width(left_text)
-      center_width = center_text.empty? ? 0 : Metrics.visible_width(center_text)
-      right_width = right_text.empty? ? 0 : Metrics.visible_width(right_text)
+      # Calculate widths - use SegmentWriter's fast path when available
+      left_width = left_text.empty? ? 0 : @left.visible_width(left_text)
+      center_width = center_text.empty? ? 0 : (@center ? @center.visible_width(center_text) : 0)
+      right_width = right_text.empty? ? 0 : (@right ? @right.visible_width(right_text) : 0)
 
       # Calculate positions
       center_col = center_text.empty? ? 0 : [(width - center_width) / 2, left_width].max
@@ -503,11 +508,44 @@ module Tui
       end
     end
 
+    # Emoji with precomputed width - triggers has_wide flag
+    class EmojiSegment
+      attr_reader :char, :width
+
+      def initialize(char)
+        @char = char.to_s
+        # Precompute: emoji = 2, variation selectors = 0
+        @width = 0
+        @char_count = 0
+        @char.each_codepoint do |code|
+          w = Metrics.char_width(code)
+          @width += w
+          @char_count += 1 if w > 0  # Don't count zero-width chars
+        end
+      end
+
+      def to_s
+        @char
+      end
+
+      # How many characters this counts as in string.length
+      def char_count
+        @char.length
+      end
+
+      # Extra width beyond char_count (for width calculation)
+      def width_delta
+        @width - char_count
+      end
+    end
+
     attr_accessor :z_index
 
     def initialize(z_index: 1)
       @segments = []
       @z_index = z_index
+      @has_wide = false
+      @width_delta = 0  # Extra width from wide chars (width - bytecount)
     end
 
     def write(text = "")
@@ -516,8 +554,17 @@ module Tui
         return self
       end
 
-      @segments << normalize_segment(text)
+      segment = normalize_segment(text)
+      if segment.is_a?(EmojiSegment)
+        @has_wide = true
+        @width_delta += segment.width_delta
+      end
+      @segments << segment
       self
+    end
+
+    def has_wide?
+      @has_wide
     end
 
     alias << write
@@ -541,11 +588,26 @@ module Tui
         when FillSegment
           raise ArgumentError, "fill requires width context" unless width
           rendered << render_fill(segment, rendered, width)
+        when EmojiSegment
+          rendered << segment.to_s
         else
           rendered << segment.to_s
         end
       end
       rendered
+    end
+
+    # Fast width calculation using precomputed emoji widths
+    def visible_width(rendered_str)
+      if @has_wide
+        # Has emoji - use delta: string length + extra width from wide chars
+        stripped = rendered_str.include?("\e") ? rendered_str.gsub(/\e\[[0-9;]*[A-Za-z]/, '') : rendered_str
+        stripped.length + @width_delta
+      else
+        # Pure ASCII - just string length
+        stripped = rendered_str.include?("\e") ? rendered_str.gsub(/\e\[[0-9;]*[A-Za-z]/, '') : rendered_str
+        stripped.length
+      end
     end
 
     def empty?
@@ -555,7 +617,8 @@ module Tui
     private
 
     def normalize_segment(text)
-      if text.is_a?(FillSegment)
+      case text
+      when FillSegment, EmojiSegment
         text
       else
         text.to_s
