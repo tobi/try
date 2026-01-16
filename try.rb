@@ -4,6 +4,7 @@ require 'io/console'
 require 'time'
 require 'fileutils'
 require_relative 'lib/tui'
+require_relative 'lib/fuzzy'
 
 class TrySelector
   include Tui::Helpers
@@ -29,12 +30,6 @@ class TrySelector
     @test_confirm = test_confirm
     @old_winch_handler = nil  # Store original SIGWINCH handler
     @needs_redraw = false
-    # Rename mode state
-    @rename_mode = false
-    @rename_entry = nil
-    @rename_buffer = ""
-    @rename_cursor_pos = 0
-    @rename_error = nil
 
     FileUtils.mkdir_p(@base_path) unless Dir.exist?(@base_path)
   end
@@ -97,6 +92,7 @@ class TrySelector
     # Load trials only once - single pass through directory
     @all_tries ||= begin
       tries = []
+      now = Time.now
       Dir.foreach(@base_path) do |entry|
         # exclude . and .. but also .git, and any other hidden dirs.
         next if entry.start_with?('.')
@@ -107,14 +103,22 @@ class TrySelector
         # Only include directories
         next unless stat.directory?
 
+        # Compute base_score from recency + date prefix bonus
+        mtime = stat.mtime
+        hours_since_access = (now - mtime) / 3600.0
+        base_score = 3.0 / Math.sqrt(hours_since_access + 1)
+
+        # Bonus for date-prefixed directories
+        base_score += 2.0 if entry.match?(/^\d{4}-\d{2}-\d{2}-/)
+
         tries << {
-          name: "📁 #{entry}",
+          text: entry,
           basename: entry,
-          basename_down: entry.downcase, 
           path: path,
           is_new: false,
           ctime: stat.ctime,
-          mtime: stat.mtime
+          mtime: mtime,
+          base_score: base_score
         }
       end
       tries
@@ -123,96 +127,19 @@ class TrySelector
 
   def get_tries
     load_all_tries
+    @fuzzy ||= Fuzzy.new(@all_tries)
 
-    query_down = @input_buffer.downcase
-    query_chars = query_down.chars
-
-    # Always score trials (for time-based sorting even without search)
-    scored_tries = @all_tries.map do |try_dir|
-      # Pass the whole object and the pre-calculated query parts
-      score = calculate_score(try_dir, query_down, query_chars, try_dir[:ctime], try_dir[:mtime])
-      try_dir.merge(score: score)
+    results = []
+    @fuzzy.match(@input_buffer).each do |entry, positions, score|
+      results << entry.merge(score: score, highlight_positions: positions)
     end
-
-    # Filter only if searching, otherwise show all
-    if @input_buffer.empty?
-      scored_tries.sort_by { |t| -t[:score] }
-    else
-      # When searching, only show matches
-      filtered = scored_tries.select { |t| t[:score] > 0 }
-      filtered.sort_by { |t| -t[:score] }
-    end
-  end
-
-  def calculate_score(try_dir, query_down, query_chars, ctime = nil, mtime = nil)
-    text = try_dir[:basename]
-    text_lower = try_dir[:basename_down] # Use pre-calculated value
-    
-    score = 0.0
-
-    # generally we are looking for default date-prefixed directories
-    if text.start_with?(/\d\d\d\d\-\d\d\-\d\d\-/)
-      score += 2.0
-    end
-
-    # If there's a search query, calculate match score
-    if !query_down.empty?
-      query_len = query_chars.length
-      text_len = text_lower.length
-      
-      last_pos = -1
-      query_idx = 0
-      
-      i = 0
-      while i < text_len
-        break if query_idx >= query_len
-        
-        char = text_lower[i] # Access string by index
-        
-        if char == query_chars[query_idx]
-          # Base point + word boundary bonus
-          score += 1.0
-          
-          # Check previous char for boundary
-          is_boundary = (i == 0) || (text_lower[i-1].match?(/\W/))
-          score += 1.0 if is_boundary
-
-          # Proximity bonus: 2/sqrt(gap+1) gives nice decay
-          if last_pos >= 0
-            gap = i - last_pos - 1
-            score += 2.0 / Math.sqrt(gap + 1)
-          end
-
-          last_pos = i
-          query_idx += 1
-        end
-        i += 1
-      end
-
-      # Return 0 if not all query chars matched
-      return 0.0 if query_idx < query_len
-
-      # Prefer shorter matches (density bonus)
-      score *= (query_len.to_f / (last_pos + 1)) if last_pos >= 0
-
-      # Length penalty - shorter text scores higher for same match
-      # e.g., "v" matches better in "2025-08-13-v" than "2025-08-13-vbo-viz"
-      score *= (10.0 / (text.length + 10.0))  # Smooth penalty that doesn't dominate
-    end
-
-    # Recency bonus based on mtime (hours since access)
-    if mtime
-      hours_since_access = (Time.now - mtime) / 3600.0
-      score += 3.0 / Math.sqrt(hours_since_access + 1)
-    end
-
-    score
+    results
   end
 
   def main_loop
     loop do
       tries = get_tries
-      show_create_new = !@input_buffer.empty? && !@rename_mode
+      show_create_new = !@input_buffer.empty?
       total_items = tries.length + (show_create_new ? 1 : 0)
 
       # Ensure cursor is within bounds
@@ -223,12 +150,6 @@ class TrySelector
       key = read_key
       # nil means terminal resize - just re-render with new dimensions
       next unless key
-
-      # Handle rename mode separately
-      if @rename_mode
-        break if handle_rename_key(key)
-        next
-      end
 
       case key
       when "\r"  # Enter (carriage return)
@@ -311,7 +232,8 @@ class TrySelector
         break if @selected
       when "\x12"  # Ctrl-R - rename selected entry
         if @cursor_pos < tries.length
-          start_rename(tries[@cursor_pos])
+          run_rename_dialog(tries[@cursor_pos])
+          break if @selected
         end
       when "\x03", "\e"  # Ctrl-C or ESC
         if @delete_mode
@@ -382,27 +304,38 @@ class TrySelector
     screen = Tui::Screen.new(io: STDERR)
     width = screen.width
     height = screen.height
-    input_label = @rename_mode ? "New name:" : "Search:"
-    placeholder = @rename_mode ? "Enter new name…" : "Type to filter…"
-    buffer = @rename_mode ? @rename_buffer : @input_buffer
-    cursor = @rename_mode ? @rename_cursor_pos : @input_cursor_pos
-    current_name = @rename_entry ? @rename_entry[:basename] : ""
 
     screen.header.add_line { |line| line.write << emoji("🏠") << Tui::Text.accent(" Try Directory Selection") }
     screen.header.add_line { |line| line.write.write_dim(fill("─")) }
-    if @rename_mode
-      screen.header.add_line { |line| line.write.write_dim("Current: #{current_name}") }
-    end
     screen.header.add_line do |line|
-      prefix = "#{input_label} "
+      prefix = "Search: "
       line.write.write_dim(prefix)
-      line.write << screen.input("", value: buffer, cursor: cursor).to_s
+      line.write << screen.input("", value: @input_buffer, cursor: @input_cursor_pos).to_s
       line.mark_has_input(Tui::Metrics.visible_width(prefix))
     end
     screen.header.add_line { |line| line.write.write_dim(fill("─")) }
 
-    max_visible = [height - 8, 3].max
-    show_create_new = !@input_buffer.empty? && !@rename_mode
+    # Add footer first to get accurate line count
+    screen.footer.add_line { |line| line.write.write_dim(fill("─")) }
+    if @delete_status
+      screen.footer.add_line { |line| line.write.write_bold(@delete_status) }
+      @delete_status = nil
+    elsif @delete_mode
+      screen.footer.add_line(background: Tui::Palette::DANGER_BG) do |line|
+        line.write.write_bold(" DELETE MODE ")
+        line.write << " #{@marked_for_deletion.length} marked  |  Ctrl-D: Toggle  Enter: Confirm  Esc: Cancel"
+      end
+    else
+      screen.footer.add_line do |line|
+        line.center.write_dim("↑/↓: Navigate  Enter: Select  ^R: Rename  ^D: Delete  Esc: Cancel")
+      end
+    end
+
+    # Calculate max visible from actual header/footer counts
+    header_lines = screen.header.lines.length
+    footer_lines = screen.footer.lines.length
+    max_visible = [height - header_lines - footer_lines, 3].max
+    show_create_new = !@input_buffer.empty?
     total_items = tries.length + (show_create_new ? 1 : 0)
 
     if @cursor_pos < @scroll_offset
@@ -425,24 +358,6 @@ class TrySelector
       end
     end
 
-    screen.footer.add_line { |line| line.write.write_dim(fill("─")) }
-
-    if @rename_mode
-      render_rename_footer(screen)
-    elsif @delete_status
-      screen.footer.add_line { |line| line.write.write_bold(@delete_status) }
-      @delete_status = nil
-    elsif @delete_mode
-      screen.footer.add_line(background: Tui::Palette::DANGER_BG) do |line|
-        line.write.write_bold(" DELETE MODE ")
-        line.write << " #{@marked_for_deletion.length} marked  |  Ctrl-D: Toggle  Enter: Confirm  Esc: Cancel"
-      end
-    else
-      screen.footer.add_line do |line|
-        line.center.write_dim("↑/↓: Navigate  Enter: Select  ^R: Rename  ^D: Delete  Esc: Cancel")
-      end
-    end
-
     screen.flush
   end
 
@@ -455,32 +370,31 @@ class TrySelector
     end
 
     line = screen.body.add_line(background: background)
-    line.write << (is_selected ? Tui::Text.bold("→ ") : "  ")
+    line.write << (is_selected ? Tui::Text.highlight("→ ") : "  ")
     line.write << (is_marked ? emoji("🗑️") : emoji("📁")) << " "
 
-    plain_name, rendered_name = formatted_entry_name(entry[:basename])
+    plain_name, rendered_name = formatted_entry_name(entry)
     prefix_width = 5
-    max_name_width = width - prefix_width - 1
+    meta_text = "#{format_relative_time(entry[:mtime])}, #{format('%.1f', entry[:score])}"
 
-    display_plain = plain_name
-    display_rendered = rendered_name
+    # Only truncate name if it exceeds total line width (not to make room for metadata)
+    max_name_width = width - prefix_width - 1
     if plain_name.length > max_name_width && max_name_width > 2
-      display_plain = plain_name[0, max_name_width - 1] + "…"
       display_rendered = truncate_with_ansi(rendered_name, max_name_width - 1) + "…"
+    else
+      display_rendered = rendered_name
     end
 
     line.write << display_rendered
 
-    meta_text = "#{format_relative_time(entry[:mtime])}, #{format('%.1f', entry[:score])}"
-    meta_width = meta_text.length + 1
-    max_name_for_meta = (width - meta_width - prefix_width - 1)
-    line.right.write_dim(meta_text) if display_plain.length <= max_name_for_meta
+    # Right content is lower layer - will be overwritten by left if they overlap
+    line.right.write_dim(meta_text)
   end
 
   def render_create_line(screen, is_selected, width)
     background = is_selected ? Tui::Palette::SELECTED_BG : nil
     line = screen.body.add_line(background: background)
-    line.write << (is_selected ? Tui::Text.bold("→ ") : "  ")
+    line.write << (is_selected ? Tui::Text.highlight("→ ") : "  ")
     date_prefix = Time.now.strftime("%Y-%m-%d")
     label = if @input_buffer.empty?
       "📂 Create new: #{date_prefix}-"
@@ -490,33 +404,36 @@ class TrySelector
     line.write << label
   end
 
-  def render_rename_footer(screen)
-    current = @rename_entry ? @rename_entry[:basename] : ""
-    screen.footer.add_line { |line| line.write.write_bold("📝 Renaming #{current}") }
-    screen.footer.add_line { |line| line.center.write_dim("Enter: Confirm  Esc: Cancel") }
-    if @rename_error
-      screen.footer.add_line { |line| line.write.write_bold(@rename_error) }
-    end
-  end
+  def formatted_entry_name(entry)
+    basename = entry[:basename]
+    positions = entry[:highlight_positions] || []
 
-  def formatted_entry_name(basename)
-    query = @input_buffer
     if basename =~ /^(\d{4}-\d{2}-\d{2})-(.+)$/
       date_part = $1
       name_part = $2
+      date_len = date_part.length + 1  # +1 for the hyphen
+
       rendered = Tui::Text.dim(date_part)
-      rendered += if !query.empty? && query.include?('-')
-        Tui::Text.bold('-')
-      else
-        Tui::Text.dim('-')
-      end
-      rendered += highlight_matches(name_part, query)
+      # Highlight hyphen if it's in positions
+      rendered += positions.include?(10) ? Tui::Text.highlight('-') : Tui::Text.dim('-')
+      rendered += highlight_with_positions(name_part, positions, date_len)
       ["#{date_part}-#{name_part}", rendered]
     else
-      [basename, highlight_matches(basename, query)]
+      [basename, highlight_with_positions(basename, positions, 0)]
     end
   end
 
+  def highlight_with_positions(text, positions, offset)
+    result = ""
+    text.chars.each_with_index do |char, i|
+      if positions.include?(i + offset)
+        result += Tui::Text.highlight(char)
+      else
+        result += char
+      end
+    end
+    result
+  end
 
   def format_relative_time(time)
     return "?" unless time
@@ -562,117 +479,110 @@ class TrySelector
     result
   end
 
-  def highlight_matches(text, query)
-    return text if query.nil? || query.empty?
-
-    result = ""
-    text_lower = text.downcase
-    query_lower = query.downcase
-    query_chars = query_lower.chars
-    query_index = 0
-
-    text.chars.each_with_index do |char, i|
-      if query_index < query_chars.length && text_lower[i] == query_chars[query_index]
-        result += Tui::Text.bold(char)
-        query_index += 1
-      else
-        result += char
-      end
-    end
-
-    result
-  end
-
-  # Rename mode methods
-  def start_rename(entry)
-    @rename_mode = true
-    @rename_entry = entry
-    @rename_buffer = entry[:basename].dup
-    @rename_cursor_pos = @rename_buffer.length
-    @rename_error = nil
+  # Rename dialog - dedicated screen similar to delete
+  def run_rename_dialog(entry)
     @delete_mode = false
     @marked_for_deletion.clear
+
+    current_name = entry[:basename]
+    rename_buffer = current_name.dup
+    rename_cursor = rename_buffer.length
+    rename_error = nil
+
+    loop do
+      render_rename_dialog(current_name, rename_buffer, rename_cursor, rename_error)
+
+      ch = read_key
+      case ch
+      when "\r"  # Enter - confirm
+        result = finalize_rename(entry, rename_buffer)
+        if result == true
+          break
+        else
+          rename_error = result  # Error message string
+        end
+      when "\e", "\x03"  # ESC or Ctrl-C - cancel
+        break
+      when "\x7F", "\b"  # Backspace
+        if rename_cursor > 0
+          rename_buffer = rename_buffer[0...(rename_cursor - 1)] + rename_buffer[rename_cursor..].to_s
+          rename_cursor -= 1
+        end
+        rename_error = nil
+      when "\x01"  # Ctrl-A - start of line
+        rename_cursor = 0
+      when "\x05"  # Ctrl-E - end of line
+        rename_cursor = rename_buffer.length
+      when "\x02"  # Ctrl-B - back one char
+        rename_cursor = [rename_cursor - 1, 0].max
+      when "\x06"  # Ctrl-F - forward one char
+        rename_cursor = [rename_cursor + 1, rename_buffer.length].min
+      when "\x0B"  # Ctrl-K - kill to end
+        rename_buffer = rename_buffer[0...rename_cursor]
+        rename_error = nil
+      when "\x17"  # Ctrl-W - delete word backward
+        if rename_cursor > 0
+          pos = rename_cursor - 1
+          pos -= 1 while pos > 0 && rename_buffer[pos] !~ /[a-zA-Z0-9]/
+          pos -= 1 while pos > 0 && rename_buffer[pos - 1] =~ /[a-zA-Z0-9]/
+          rename_buffer = rename_buffer[0...pos] + rename_buffer[rename_cursor..].to_s
+          rename_cursor = pos
+        end
+        rename_error = nil
+      when String
+        if ch.length == 1 && ch =~ /[a-zA-Z0-9\-_\.\s\/]/
+          rename_buffer = rename_buffer[0...rename_cursor] + ch + rename_buffer[rename_cursor..].to_s
+          rename_cursor += 1
+          rename_error = nil
+        end
+      end
+    end
+
+    @needs_redraw = true
   end
 
-  def exit_rename
-    @rename_mode = false
-    @rename_entry = nil
-    @rename_buffer = ""
-    @rename_cursor_pos = 0
-    @rename_error = nil
+  def render_rename_dialog(current_name, rename_buffer, rename_cursor, rename_error)
+    screen = Tui::Screen.new(io: STDERR)
+
+    screen.header.add_line do |line|
+      line.center << emoji("✏️") << Tui::Text.accent("  Rename directory")
+    end
+    screen.header.add_line { |line| line.write.write_dim(fill("─")) }
+
+    screen.body.add_line do |line|
+      line.write << emoji("📁") << " #{current_name}"
+    end
+
+    # Add empty lines, then centered input prompt
+    2.times { screen.body.add_line }
+    screen.body.add_line do |line|
+      prefix = "New name: "
+      line.center.write_dim(prefix)
+      line.center << screen.input("", value: rename_buffer, cursor: rename_cursor).to_s
+      line.mark_has_input((screen.width - Tui::Metrics.visible_width(prefix) - rename_buffer.length) / 2 + Tui::Metrics.visible_width(prefix))
+    end
+
+    if rename_error
+      screen.body.add_line
+      screen.body.add_line { |line| line.center.write_bold(rename_error) }
+    end
+
+    screen.footer.add_line { |line| line.write.write_dim(fill("─")) }
+    screen.footer.add_line { |line| line.center.write_dim("Enter: Confirm  Esc: Cancel") }
+
+    screen.flush
   end
 
-  def handle_rename_key(key)
-    case key
-    when "\r"  # Enter - confirm rename
-      return finalize_rename
-    when "\e", "\x03"  # ESC or Ctrl-C - cancel
-      exit_rename
-      return false
-    when "\x7F", "\b"  # Backspace
-      if @rename_cursor_pos > 0
-        @rename_buffer = @rename_buffer[0...(@rename_cursor_pos - 1)] + @rename_buffer[@rename_cursor_pos..-1].to_s
-        @rename_cursor_pos -= 1
-      end
-      @rename_error = nil
-    when "\x01"  # Ctrl-A - start of line
-      @rename_cursor_pos = 0
-    when "\x05"  # Ctrl-E - end of line
-      @rename_cursor_pos = @rename_buffer.length
-    when "\x02"  # Ctrl-B - back one char
-      @rename_cursor_pos = [@rename_cursor_pos - 1, 0].max
-    when "\x06"  # Ctrl-F - forward one char
-      @rename_cursor_pos = [@rename_cursor_pos + 1, @rename_buffer.length].min
-    when "\x0B"  # Ctrl-K - kill to end
-      @rename_buffer = @rename_buffer[0...@rename_cursor_pos]
-      @rename_error = nil
-    when "\x17"  # Ctrl-W - delete word backward
-      if @rename_cursor_pos > 0
-        pos = @rename_cursor_pos - 1
-        pos -= 1 while pos > 0 && @rename_buffer[pos] !~ /[a-zA-Z0-9]/
-        pos -= 1 while pos > 0 && @rename_buffer[pos - 1] =~ /[a-zA-Z0-9]/
-        @rename_buffer = @rename_buffer[0...pos] + @rename_buffer[@rename_cursor_pos..-1].to_s
-        @rename_cursor_pos = pos
-      end
-      @rename_error = nil
-    when String
-      if key.length == 1 && key =~ /[a-zA-Z0-9\-_\.\s\/]/
-        @rename_buffer = @rename_buffer[0...@rename_cursor_pos] + key + @rename_buffer[@rename_cursor_pos..-1].to_s
-        @rename_cursor_pos += 1
-        @rename_error = nil
-      end
-    end
-    false
-  end
+  def finalize_rename(entry, rename_buffer)
+    new_name = rename_buffer.strip.gsub(/\s+/, '-')
+    old_name = entry[:basename]
 
-  def finalize_rename
-    new_name = @rename_buffer.strip.gsub(/\s+/, '-')
-    old_name = @rename_entry ? @rename_entry[:basename] : nil
+    return "Name cannot be empty" if new_name.empty?
+    return "Name cannot contain /" if new_name.include?('/')
+    return true if new_name == old_name  # No change, just exit
+    return "Directory exists: #{new_name}" if Dir.exist?(File.join(@base_path, new_name))
 
-    if new_name.empty?
-      @rename_error = "Name cannot be empty"
-      return false
-    end
-
-    if new_name.include?('/')
-      @rename_error = "Name cannot contain /"
-      return false
-    end
-
-    if old_name && new_name == old_name
-      exit_rename
-      return false
-    end
-
-    if Dir.exist?(File.join(@base_path, new_name))
-      @rename_error = "Directory exists: #{new_name}"
-      return false
-    end
-
-    if old_name
-      @selected = { type: :rename, old: old_name, new: new_name, base_path: @base_path }
-    end
-    exit_rename
+    @selected = { type: :rename, old: old_name, new: new_name, base_path: @base_path }
     true
   end
 
@@ -784,23 +694,26 @@ class TrySelector
 
     count = marked_items.length
     screen.header.add_line do |line|
-      line.write << emoji("🗑️") << Tui::Text.accent("  Delete #{count} #{count == 1 ? 'directory' : 'directories'}?")
+      line.center << emoji("🗑️") << Tui::Text.accent("  Delete #{count} #{count == 1 ? 'directory' : 'directories'}?")
     end
     screen.header.add_line { |line| line.write.write_dim(fill("─")) }
 
     marked_items.each do |item|
       screen.body.add_line(background: Tui::Palette::DANGER_BG) do |line|
-        line.write << "  " << emoji("🗑️") << " #{item[:basename]}"
+        line.write << emoji("🗑️") << " #{item[:basename]}"
       end
     end
 
-    screen.footer.add_line { |line| line.write.write_dim(fill("─")) }
-    screen.footer.add_line do |line|
+    # Add empty lines, then centered confirmation prompt
+    2.times { screen.body.add_line }
+    screen.body.add_line do |line|
       prefix = "Type YES to confirm: "
-      line.write.write_dim(prefix)
-      line.write << screen.input("", value: confirmation_buffer, cursor: confirmation_cursor).to_s
-      line.mark_has_input(Tui::Metrics.visible_width(prefix))
+      line.center.write_dim(prefix)
+      line.center << screen.input("", value: confirmation_buffer, cursor: confirmation_cursor).to_s
+      line.mark_has_input((screen.width - Tui::Metrics.visible_width(prefix) - confirmation_buffer.length) / 2 + Tui::Metrics.visible_width(prefix))
     end
+
+    screen.footer.add_line { |line| line.write.write_dim(fill("─")) }
     screen.footer.add_line { |line| line.center.write_dim("Enter: Confirm  Esc: Cancel") }
 
     screen.flush
@@ -826,6 +739,7 @@ class TrySelector
         names = validated_paths.map { |p| p[:basename] }.join(", ")
         @delete_status = "Deleted: #{names}"
         @all_tries = nil  # Clear cache
+        @fuzzy = nil
         @marked_for_deletion.clear
         @delete_mode = false
       rescue => e
@@ -842,7 +756,7 @@ end
 # Main execution with OptionParser subcommands
 if __FILE__ == $0
 
-  VERSION = "1.2.0"
+  VERSION = "1.7.0"
 
   def print_global_help
     text = <<~HELP
@@ -1176,7 +1090,7 @@ if __FILE__ == $0
   end
 
   def script_cd(path)
-    ["touch #{q(path)}", "cd #{q(path)}"]
+    ["touch #{q(path)}", "echo #{q(path)}", "cd #{q(path)}"]
   end
 
   def script_mkdir_cd(path)

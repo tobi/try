@@ -82,6 +82,7 @@ module Tui
   module Palette
     HEADER      = ANSI.sgr(1, "38;5;114")
     ACCENT      = ANSI.sgr(1, "38;5;214")
+    HIGHLIGHT   = "\e[1;33m"  # Bold yellow (matches C version)
     MUTED       = ANSI.fg(245)
     MATCH       = ANSI.sgr(1, "38;5;226")
     INPUT_HINT  = ANSI.fg(244)
@@ -178,6 +179,67 @@ module Tui
 
       truncated.rstrip + overflow
     end
+
+    # Truncate from the start, keeping trailing portion (for right-aligned overflow)
+    # Preserves leading ANSI escape sequences (like dim/color codes)
+    def truncate_from_start(text, max_width)
+      vis_width = visible_width(text)
+      return text if vis_width <= max_width
+
+      # Collect leading escape sequences first
+      leading_escapes = String.new
+      in_escape = false
+      escape_buf = String.new
+      text_start = 0
+
+      text.each_char.with_index do |ch, i|
+        if in_escape
+          escape_buf << ch
+          if ch.match?(/[A-Za-z]/)
+            leading_escapes << escape_buf
+            escape_buf = String.new
+            in_escape = false
+            text_start = i + 1
+          end
+        elsif ch == "\e"
+          in_escape = true
+          escape_buf = ch
+        else
+          # First non-escape character, stop collecting leading escapes
+          break
+        end
+      end
+
+      # Now skip visible characters to get max_width remaining
+      chars_to_skip = vis_width - max_width
+      skipped = 0
+      result = String.new
+      in_escape = false
+
+      text.each_char do |ch|
+        if in_escape
+          result << ch if skipped >= chars_to_skip
+          in_escape = false if ch.match?(/[A-Za-z]/)
+          next
+        end
+
+        if ch == "\e"
+          in_escape = true
+          result << ch if skipped >= chars_to_skip
+          next
+        end
+
+        cw = char_width(ch.ord)
+        if skipped < chars_to_skip
+          skipped += cw
+        else
+          result << ch
+        end
+      end
+
+      # Prepend leading escapes to preserve styling
+      leading_escapes + result
+    end
   end
 
   module Text
@@ -192,7 +254,7 @@ module Tui
     end
 
     def highlight(text)
-      wrap(text, Palette::MATCH, ANSI::RESET_FG + ANSI::RESET_INTENSITY)
+      wrap(text, Palette::HIGHLIGHT, ANSI::RESET_FG + ANSI::RESET_INTENSITY)
     end
 
     def accent(text)
@@ -318,28 +380,59 @@ module Tui
       rescue IOError
       end
 
-      rendered_rows = 0
       cursor_row = nil
       cursor_col = nil
+      current_row = 0
 
-      @sections.each do |section|
-        section.lines.each do |line|
-          # Check if this line contains the input field
-          if @input_field && line.has_input?
-            cursor_row = rendered_rows + 1  # 1-based row
-            cursor_col = line.cursor_column(@input_field, @width)
-          end
-          line.render(@io, @width)
-          rendered_rows += 1
+      # Render header at top
+      @header.lines.each do |line|
+        if @input_field && line.has_input?
+          cursor_row = current_row + 1
+          cursor_col = line.cursor_column(@input_field, @width)
         end
+        line.render(@io, @width)
+        current_row += 1
       end
 
-      pad_rows = @height - rendered_rows
-      if pad_rows.positive?
-        # Write all but last padding row with \n
-        (pad_rows - 1).times { @io.write("#{ANSI::CLEAR_EOL}\n") }
-        # Last row: clear but no \n to avoid scrolling
-        @io.write(ANSI::CLEAR_EOL)
+      # Calculate available body space (total height minus header and footer)
+      footer_lines = @footer.lines.length
+      body_space = @height - current_row - footer_lines
+
+      # Render body lines (limited to available space)
+      body_rendered = 0
+      @body.lines.each do |line|
+        break if body_rendered >= body_space
+        if @input_field && line.has_input?
+          cursor_row = current_row + 1
+          cursor_col = line.cursor_column(@input_field, @width)
+        end
+        line.render(@io, @width)
+        current_row += 1
+        body_rendered += 1
+      end
+
+      # Fill gap between body and footer with blank lines
+      # Use \r to position at column 0, clear line, fill with spaces for reliability
+      gap = body_space - body_rendered
+      blank_line = "\r#{ANSI::CLEAR_EOL}#{' ' * (@width - 1)}\n"
+      gap.times do
+        @io.write(blank_line)
+        current_row += 1
+      end
+
+      # Render footer at the bottom (sticky)
+      @footer.lines.each_with_index do |line, idx|
+        if @input_field && line.has_input?
+          cursor_row = current_row + 1
+          cursor_col = line.cursor_column(@input_field, @width)
+        end
+        # Last line: don't write \n to avoid scrolling
+        if idx == footer_lines - 1
+          line.render_no_newline(@io, @width)
+        else
+          line.render(@io, @width)
+        end
+        current_row += 1
       end
 
       # Position cursor at input field if present, otherwise hide cursor
@@ -431,25 +524,55 @@ module Tui
     def render(io, width)
       buffer = String.new
       buffer << "\r"
+      buffer << ANSI::CLEAR_EOL  # Clear line before rendering to remove stale content
 
       # Set background if present
       buffer << background if background && Tui.colors_enabled?
 
+      # Maximum content to avoid wrap (leave room for newline)
+      max_content = width - 1
       content_width = [width, 1].max
+
       left_text = @left.to_s(width: content_width)
       center_text = @center ? @center.to_s(width: content_width) : ""
       right_text = @right ? @right.to_s(width: content_width) : ""
 
-      left_text = Metrics.truncate(left_text, content_width) if @truncate && !left_text.empty?
+      # Truncate left to fit line
+      left_text = Metrics.truncate(left_text, max_content) if @truncate && !left_text.empty?
+      left_width = left_text.empty? ? 0 : Metrics.visible_width(left_text)
 
-      # Calculate widths - use SegmentWriter's fast path when available
-      left_width = left_text.empty? ? 0 : @left.visible_width(left_text)
-      center_width = center_text.empty? ? 0 : (@center ? @center.visible_width(center_text) : 0)
-      right_width = right_text.empty? ? 0 : (@right ? @right.visible_width(right_text) : 0)
+      # Truncate center text to available space (never wrap)
+      unless center_text.empty?
+        max_center = max_content - left_width - 4
+        if max_center > 0
+          center_text = Metrics.truncate(center_text, max_center)
+        else
+          center_text = ""
+        end
+      end
+      center_width = center_text.empty? ? 0 : Metrics.visible_width(center_text)
+
+      # Calculate available space for right (need at least 1 space gap after left/center)
+      used_by_left_center = left_width + center_width + (center_width > 0 ? 2 : 0)
+      available_for_right = max_content - used_by_left_center - 1  # -1 for mandatory gap
+
+      # Truncate right from the LEFT if needed (show trailing portion)
+      right_width = 0
+      unless right_text.empty?
+        right_width = Metrics.visible_width(right_text)
+        if available_for_right <= 0
+          right_text = ""
+          right_width = 0
+        elsif right_width > available_for_right
+          # Skip leading characters, keep trailing portion
+          right_text = Metrics.truncate_from_start(right_text, available_for_right)
+          right_width = Metrics.visible_width(right_text)
+        end
+      end
 
       # Calculate positions
-      center_col = center_text.empty? ? 0 : [(width - center_width) / 2, left_width].max
-      right_col = right_text.empty? ? width : [width - right_width, left_width].max
+      center_col = center_text.empty? ? 0 : [(max_content - center_width) / 2, left_width + 1].max
+      right_col = right_text.empty? ? max_content : (max_content - right_width)
 
       # Write left content
       buffer << left_text unless left_text.empty?
@@ -464,20 +587,9 @@ module Tui
       end
 
       # Fill gap to right content (or end of line)
-      # This is critical for clearing stale content from previous renders
-      # Fill to width-1 to leave room for the newline without wrap
-      fill_end = right_text.empty? ? (width - 1) : right_col
+      fill_end = right_text.empty? ? max_content : right_col
       gap = fill_end - current_pos
-
-      if gap > 0
-        buffer << (" " * gap)
-      end
-
-      # If no right content, fill the very last column with a space
-      # This ensures the line extends to full width
-      if right_text.empty? && current_pos + gap < width - 1
-        buffer << " "
-      end
+      buffer << (" " * gap) if gap > 0
 
       # Write right content if present
       unless right_text.empty?
@@ -487,6 +599,81 @@ module Tui
 
       buffer << ANSI::RESET
       buffer << "\n"
+
+      io.write(buffer)
+    end
+
+    def render_no_newline(io, width)
+      buffer = String.new
+      buffer << "\r"
+      buffer << ANSI::CLEAR_EOL
+
+      buffer << background if background && Tui.colors_enabled?
+
+      max_content = width - 1
+      content_width = [width, 1].max
+
+      left_text = @left.to_s(width: content_width)
+      center_text = @center ? @center.to_s(width: content_width) : ""
+      right_text = @right ? @right.to_s(width: content_width) : ""
+
+      # Truncate left to fit line
+      left_text = Metrics.truncate(left_text, max_content) if @truncate && !left_text.empty?
+      left_width = left_text.empty? ? 0 : Metrics.visible_width(left_text)
+
+      # Truncate center text to available space (never wrap)
+      unless center_text.empty?
+        max_center = max_content - left_width - 4
+        if max_center > 0
+          center_text = Metrics.truncate(center_text, max_center)
+        else
+          center_text = ""
+        end
+      end
+      center_width = center_text.empty? ? 0 : Metrics.visible_width(center_text)
+
+      # Calculate available space for right (need at least 1 space gap)
+      used_by_left_center = left_width + center_width + (center_width > 0 ? 2 : 0)
+      available_for_right = max_content - used_by_left_center - 1
+
+      # Truncate right from the LEFT if needed (show trailing portion)
+      right_width = 0
+      unless right_text.empty?
+        right_width = Metrics.visible_width(right_text)
+        if available_for_right <= 0
+          right_text = ""
+          right_width = 0
+        elsif right_width > available_for_right
+          right_text = Metrics.truncate_from_start(right_text, available_for_right)
+          right_width = Metrics.visible_width(right_text)
+        end
+      end
+
+      # Calculate positions
+      center_col = center_text.empty? ? 0 : [(max_content - center_width) / 2, left_width + 1].max
+      right_col = right_text.empty? ? max_content : (max_content - right_width)
+
+      buffer << left_text unless left_text.empty?
+      current_pos = left_width
+
+      unless center_text.empty?
+        gap_to_center = center_col - current_pos
+        buffer << (" " * gap_to_center) if gap_to_center > 0
+        buffer << center_text
+        current_pos = center_col + center_width
+      end
+
+      fill_end = right_text.empty? ? max_content : right_col
+      gap = fill_end - current_pos
+      buffer << (" " * gap) if gap > 0
+
+      unless right_text.empty?
+        buffer << right_text
+        buffer << ANSI::RESET_FG
+      end
+
+      buffer << ANSI::RESET
+      # No newline at end
 
       io.write(buffer)
     end
