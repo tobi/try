@@ -3,7 +3,11 @@
     "allow": [
       "Bash(git add:*)",
       "Bash(git commit:*)",
-      "Bash(gh issue list:*)"
+      "Bash(gh issue list:*)",
+      "WebSearch",
+      "Skill(frontend-design)",
+      "Bash(git push:*)",
+      "Bash(gh api:*)"
     ],
     "deny": [],
     "ask": []
