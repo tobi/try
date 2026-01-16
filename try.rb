@@ -125,13 +125,32 @@ class TrySelector
     end
   end
 
+  # Result wrapper to avoid Hash#merge allocation per entry
+  TryEntry = Data.define(:data, :score, :highlight_positions) do
+    def [](key)
+      case key
+      when :score then score
+      when :highlight_positions then highlight_positions
+      else data[key]
+      end
+    end
+
+    def method_missing(name, *)
+      data[name]
+    end
+
+    def respond_to_missing?(name, include_private = false)
+      data.key?(name) || super
+    end
+  end
+
   def get_tries
     load_all_tries
     @fuzzy ||= Fuzzy.new(@all_tries)
 
     results = []
     @fuzzy.match(@input_buffer).each do |entry, positions, score|
-      results << entry.merge(score: score, highlight_positions: positions)
+      results << TryEntry.new(entry, score, positions)
     end
     results
   end

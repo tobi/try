@@ -79,51 +79,47 @@ class Fuzzy
 
     private
 
+    # Pre-computed sqrt values for proximity bonus (gap 0-15)
+    SQRT_TABLE = (0..16).map { |n| 2.0 / Math.sqrt(n + 1) }.freeze
+
     def calculate_match(entry)
       positions = []
       score = entry.base_score
 
       # Empty query = match all with base score only
-      if @query.empty?
-        return [score, positions]
-      end
+      return [score, positions] if @query.empty?
 
-      text_lower = entry.text_lower
-      text_len = text_lower.length
-      query_len = @query_chars.length
+      text = entry.text_lower
+      query_chars = @query_chars
+      query_len = query_chars.length
 
       last_pos = -1
-      query_idx = 0
+      pos = 0
 
-      i = 0
-      while i < text_len
-        break if query_idx >= query_len
+      query_chars.each do |qc|
+        # Find next occurrence of query char starting from pos
+        found = text.index(qc, pos)
+        return nil unless found  # No match
 
-        if text_lower[i] == @query_chars[query_idx]
-          positions << i
+        positions << found
 
-          # Base match point
+        # Base match point
+        score += 1.0
+
+        # Word boundary bonus (start of string or after non-alphanumeric)
+        if found == 0 || text[found - 1].match?(/[^a-z0-9]/)
           score += 1.0
-
-          # Word boundary bonus (start of string or after non-alphanumeric)
-          is_boundary = (i == 0) || text_lower[i - 1].match?(/[^a-z0-9]/)
-          score += 1.0 if is_boundary
-
-          # Proximity bonus (consecutive chars score higher)
-          if last_pos >= 0
-            gap = i - last_pos - 1
-            score += 2.0 / Math.sqrt(gap + 1)
-          end
-
-          last_pos = i
-          query_idx += 1
         end
 
-        i += 1
-      end
+        # Proximity bonus (consecutive chars score higher)
+        if last_pos >= 0
+          gap = found - last_pos - 1
+          score += gap < 16 ? SQRT_TABLE[gap] : (2.0 / Math.sqrt(gap + 1))
+        end
 
-      # Not all query chars matched = no match
-      return nil if query_idx < query_len
+        last_pos = found
+        pos = found + 1
+      end
 
       # Density bonus: prefer shorter spans
       score *= (query_len.to_f / (last_pos + 1)) if last_pos >= 0
