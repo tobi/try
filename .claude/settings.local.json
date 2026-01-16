@@ -7,7 +7,12 @@
       "WebSearch",
       "Skill(frontend-design)",
       "Bash(git push:*)",
-      "Bash(gh api:*)"
+      "Bash(gh api:*)",
+      "Bash(gh repo create:*)",
+      "Bash(curl:*)",
+      "Bash(cat:*)",
+      "Bash(gem build:*)",
+      "Bash(gem push:*)"
     ],
     "deny": [],
     "ask": []
