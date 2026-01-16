@@ -43,7 +43,8 @@ end
 
 class TuiMetricsTest < TuiTestCase
   def test_visible_width_counts_wide_characters
-    text = "aあb" # あ should be double-width
+    # We only support emoji as wide chars (not CJK)
+    text = "a📁b"  # 📁 = width 2
     assert_equal 4, Tui::Metrics.visible_width(text)
   end
 
@@ -63,8 +64,10 @@ class TuiMetricsTest < TuiTestCase
   end
 
   def test_wide_predicate
-    assert Tui::Metrics.wide?("界")
+    # We only support emoji as wide chars (📁 etc), not CJK
+    assert Tui::Metrics.wide?("📁")
     refute Tui::Metrics.wide?("k")
+    refute Tui::Metrics.wide?("→")
   end
 end
 

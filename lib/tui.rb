@@ -118,34 +118,16 @@ module Tui
       width
     end
 
-    # Combined width check - single method call per character
+    # Simplified width check - we only use known Unicode in this app
     def char_width(code)
-      # Fast path: ASCII printable (most common)
-      return 1 if code >= 0x20 && code <= 0x7E
+      # Zero-width: variation selectors (🗑️ = trash + VS16)
+      return 0 if code >= 0xFE00 && code <= 0xFE0F
 
-      # Zero-width characters
-      return 0 if (code >= 0xFE00 && code <= 0xFE0F) ||   # Variation Selectors
-                  (code >= 0x200B && code <= 0x200D) ||   # Zero-width space, ZWNJ, ZWJ
-                  (code >= 0x0300 && code <= 0x036F) ||   # Combining Diacritical Marks
-                  (code >= 0xE0100 && code <= 0xE01EF)    # Variation Selectors Supplement
+      # Emoji range (📁🏠🗑📂 etc) = width 2
+      return 2 if code >= 0x1F300 && code <= 0x1FAFF
 
-      # Wide characters (2-width)
-      return 2 if (code >= 0x1100 && code <= 0x115F) ||   # Hangul Jamo
-                  (code >= 0x231A && code <= 0x23FF) ||   # Miscellaneous Technical
-                  (code >= 0x2600 && code <= 0x26FF) ||   # Miscellaneous Symbols
-                  (code >= 0x2700 && code <= 0x27BF) ||   # Dingbats
-                  (code >= 0x2E80 && code <= 0x9FFF) ||   # CJK
-                  (code >= 0xAC00 && code <= 0xD7AF) ||   # Hangul Syllables
-                  (code >= 0xF900 && code <= 0xFAFF) ||   # CJK Compatibility Ideographs
-                  (code >= 0xFE10 && code <= 0xFE1F) ||   # Vertical forms
-                  (code >= 0xFE30 && code <= 0xFE6F) ||   # CJK Compatibility Forms
-                  (code >= 0xFF00 && code <= 0xFF60) ||   # Fullwidth Forms
-                  (code >= 0xFFE0 && code <= 0xFFE6) ||   # Fullwidth symbols
-                  (code >= 0x1F300 && code <= 0x1F9FF) || # Emojis
-                  (code >= 0x1FA00 && code <= 0x1FAFF) || # Chess symbols, Extended-A
-                  (code >= 0x20000 && code <= 0x2FFFF)    # CJK Extension B+
-
-      1 # Default width
+      # Everything else (ASCII, arrows, box drawing, ellipsis) = width 1
+      1
     end
 
     def zero_width?(ch)
