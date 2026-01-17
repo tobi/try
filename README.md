@@ -22,7 +22,25 @@ Instantly navigate through all your experiment directories with:
 - **Auto-dating** - creates directories like `2025-08-17-redis-experiment`
 - **Zero config** - just one Ruby file, no dependencies
 
-## Quick Start
+## Installation
+
+### RubyGems (Recommended)
+
+```bash
+gem install try-cli
+```
+
+Then add to your shell:
+
+```bash
+# Bash/Zsh - add to .zshrc or .bashrc
+eval "$(try init)"
+
+# Fish - add to config.fish
+eval (try init | string collect)
+```
+
+### Quick Start (Manual)
 
 ```bash
 curl -sL https://raw.githubusercontent.com/tobi/try/refs/heads/main/try.rb > ~/.local/try.rb

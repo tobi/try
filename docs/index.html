@@ -1013,6 +1013,62 @@
       display: inline-flex;
       margin: 0;
     }
+
+    /* Testimonial Grid */
+    .testimonial-grid {
+      position: relative;
+      z-index: 20;
+      padding: 4rem 2rem 8rem;
+      background: linear-gradient(180deg, #6930c3 0%, var(--black) 100%);
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+      gap: 2rem;
+      max-width: 1200px;
+      margin: 0 auto;
+    }
+
+    .testimonial-card {
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      padding: 2rem;
+      position: relative;
+    }
+
+    .testimonial-card::before {
+      content: '"';
+      position: absolute;
+      top: 1rem;
+      left: 1.5rem;
+      font-family: 'Archivo Black', sans-serif;
+      font-size: 4rem;
+      color: var(--yellow);
+      opacity: 0.2;
+      line-height: 1;
+    }
+
+    .testimonial-text {
+      font-size: 1.1rem;
+      line-height: 1.6;
+      color: var(--white);
+      font-style: italic;
+      padding-left: 1rem;
+    }
+
+    .testimonial-author {
+      margin-top: 1.5rem;
+      font-family: 'Space Mono', monospace;
+      font-size: 0.8rem;
+      color: rgba(255, 255, 255, 0.6);
+    }
+
+    .testimonial-author a {
+      color: var(--cyan);
+      text-decoration: none;
+    }
+
+    .testimonial-author a:hover {
+      color: var(--yellow);
+    }
   </style>
 </head>
 <body>
@@ -1101,30 +1157,30 @@
         <div class="step-number">1</div>
         <h3>Install</h3>
         <div class="code-block">
-          <code>brew install tobi/tap/try</code>
+          <code>gem install try-cli</code>
           <button class="copy-btn" onclick="copyCode(this)">Copy</button>
         </div>
-        <p class="step-note">macOS via Homebrew. Other platforms coming soon™</p>
+        <p class="step-note">Works anywhere Ruby runs. Zero dependencies.</p>
       </div>
 
       <div class="install-card">
         <div class="step-number">2</div>
+        <h3>Shell Setup</h3>
+        <div class="code-block">
+          <code>eval "$(try init)"</code>
+          <button class="copy-btn" onclick="copyCode(this)">Copy</button>
+        </div>
+        <p class="step-note">Add to .zshrc or .bashrc. Fish users: see docs.</p>
+      </div>
+
+      <div class="install-card">
+        <div class="step-number">3</div>
         <h3>Try Something</h3>
         <div class="code-block">
           <code>try cool-experiment</code>
           <button class="copy-btn" onclick="copyCode(this)">Copy</button>
         </div>
-        <p class="step-note">Creates ~/tries/YYYY-MM-DD-cool-experiment and drops you in</p>
-      </div>
-
-      <div class="install-card">
-        <div class="step-number">3</div>
-        <h3>Go Wild</h3>
-        <div class="code-block">
-          <code>code . && npm init -y && echo "🚀"</code>
-          <button class="copy-btn" onclick="copyCode(this)">Copy</button>
-        </div>
-        <p class="step-note">Chaos, but organized. Your future self will thank you.</p>
+        <p class="step-note">Creates ~/src/tries/YYYY-MM-DD-cool-experiment</p>
       </div>
     </div>
 
@@ -1138,10 +1194,10 @@
     </div>
 
     <div class="alt-install">
-      <p>— OR IF YOU'RE FEELING FANCY —</p>
+      <p>— PREFER HOMEBREW? —</p>
       <div class="alt-methods">
         <div class="code-block">
-          <code>gem install try-cli</code>
+          <code>brew tap tobi/try https://github.com/tobi/try && brew install try</code>
           <button class="copy-btn" onclick="copyCode(this)">Copy</button>
         </div>
       </div>
@@ -1231,13 +1287,28 @@
     </div>
   </section>
 
-  <!-- Quote Section -->
+  <!-- Testimonials Section -->
   <section class="quote-section">
     <div class="quote-content">
       <p class="quote-text">
-        "The best way to have a good idea is to have lots of ideas and throw away the bad ones."
+        "This new try tool from @tobi looks exactly what I didn't even realize that I needed!"
       </p>
-      <p class="quote-author">— Linus Pauling, Two-time Nobel Prize Winner</p>
+      <p class="quote-author">— <a href="https://x.com/dhh" style="color: var(--yellow); text-decoration: none;">@dhh</a>, Creator of Ruby on Rails</p>
+    </div>
+  </section>
+
+  <section class="testimonial-grid">
+    <div class="testimonial-card">
+      <p class="testimonial-text">"The biggest positive change to my local workflow in the past year. Nothing comes close."</p>
+      <p class="testimonial-author">— <a href="https://x.com/kovyrin">@kovyrin</a></p>
+    </div>
+    <div class="testimonial-card">
+      <p class="testimonial-text">"I LOVE @tobi's try CLI... no need for one folder for all your playground and experiments."</p>
+      <p class="testimonial-author">— <a href="https://x.com/shreygupta">@shreygupta</a></p>
+    </div>
+    <div class="testimonial-card">
+      <p class="testimonial-text">"Try is amazing. I have so so many tries now. Love it."</p>
+      <p class="testimonial-author">— <a href="https://x.com/robzolkos">@robzolkos</a></p>
     </div>
   </section>
 
