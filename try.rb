@@ -826,7 +826,7 @@ if __FILE__ == $0
         Default path: ~/src/tries
         Current: #{TrySelector::TRY_PATH}
     HELP
-    STDOUT.print(text)
+    STDERR.print(text)
   end
 
   # Process color-related flags early
@@ -844,7 +844,7 @@ if __FILE__ == $0
 
   # Version flag
   if ARGV.include?("--version") || ARGV.include?("-v")
-    puts "try #{VERSION}"
+    STDERR.puts "try #{VERSION}"
     exit 0
   end
 
