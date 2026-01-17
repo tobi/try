@@ -3,12 +3,17 @@ class Try < Formula
   homepage "https://github.com/tobi/try"
   url "https://github.com/tobi/try/archive/refs/tags/v1.0.0.tar.gz"
   sha256 "267f2b63561de396a8938c6f41e68e8cecc635d05c582a1f866c0bbf37676af2"
-  version "1.0.0"
+
+  head "https://github.com/tobi/try.git", branch: "main"
 
   depends_on "ruby"
 
   def install
     bin.install "try.rb" => "try"
+    if build.head?
+      (bin/"lib").install "lib/tui.rb"
+      (bin/"lib").install "lib/fuzzy.rb"
+    end
   end
 
   def caveats
