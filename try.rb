@@ -9,6 +9,7 @@ require_relative 'lib/fuzzy'
 class TrySelector
   include Tui::Helpers
   TRY_PATH = ENV['TRY_PATH'] || File.expand_path("~/src/tries")
+  MAX_INPUT_LENGTH = 1024  # Maximum input length to prevent DoS attacks
 
   def initialize(search_term = "", base_path: TRY_PATH, initial_input: nil, test_render_once: false, test_no_cls: false, test_keys: nil, test_confirm: nil)
     @search_term = search_term.gsub(/\s+/, '-')
@@ -19,7 +20,7 @@ class TrySelector
     @input_cursor_pos = @input_buffer.length  # Start at end of buffer
     @selected = nil
     @all_trials = nil  # Memoized trials
-    @base_path = base_path
+    @base_path = File.realpath(base_path)  # Resolve to absolute path to prevent traversal
     @delete_status = nil  # Status message for deletions
     @delete_mode = false  # Whether we're in deletion mode
     @marked_for_deletion = []  # Paths marked for deletion
@@ -32,6 +33,21 @@ class TrySelector
     @needs_redraw = false
 
     FileUtils.mkdir_p(@base_path) unless Dir.exist?(@base_path)
+  end
+
+  # Security: Validate that a path is within the base directory (prevent path traversal)
+  def path_within_base?(path)
+    real_path = File.realpath(path) rescue nil
+    return false unless real_path
+    real_path.start_with?(@base_path + File::SEPARATOR) || real_path == @base_path
+  end
+
+  # Security: Log security-sensitive events
+  def security_log(event, details = {})
+    timestamp = Time.now.strftime("%Y-%m-%d %H:%M:%S")
+    log_entry = "[#{timestamp}] #{event}: #{details.inspect}\n"
+    log_file = File.join(@base_path, '.security.log')
+    File.open(log_file, 'a') { |f| f.write(log_entry) } rescue nil
   end
 
   def run
@@ -98,6 +114,10 @@ class TrySelector
         next if entry.start_with?('.')
 
         path = File.join(@base_path, entry)
+        
+        # Security: Validate path is within base directory (prevent path traversal)
+        next unless path_within_base?(path)
+        
         stat = File.stat(path)
 
         # Only include directories
@@ -265,7 +285,8 @@ class TrySelector
         end
       when String
         # Only accept printable characters, not escape sequences
-        if key.length == 1 && key =~ /[a-zA-Z0-9\-\_\. ]/
+        # Security: Enforce maximum input length to prevent DoS
+        if key.length == 1 && key =~ /[a-zA-Z0-9\-\_\. ]/ && @input_buffer.length < MAX_INPUT_LENGTH
           @input_buffer = @input_buffer[0...@input_cursor_pos] + key + @input_buffer[@input_cursor_pos..-1]
           @input_cursor_pos += 1
           @cursor_pos = 0  # Reset list selection when typing

@@ -295,6 +295,28 @@ module Tui
     end
   end
 
+  # Security module for sanitizing user input to prevent command injection
+  module Security
+    # Shell metacharacters that could be used for command injection
+    SHELL_METACHARACTERS = /[;|&$`<>(){}[\]\\!#*?~\n\r]/
+    
+    module_function
+    
+    # Sanitize user input to remove shell metacharacters
+    # This prevents command injection attacks when user input might be used in shell contexts
+    def sanitize_input(input)
+      return "" if input.nil?
+      # Remove all shell metacharacters to prevent command injection
+      input.to_s.gsub(SHELL_METACHARACTERS, '')
+    end
+    
+    # Check if input contains potentially dangerous shell metacharacters
+    def contains_shell_metacharacters?(input)
+      return false if input.nil?
+      !!(input.to_s =~ SHELL_METACHARACTERS)
+    end
+  end
+
   class Terminal
     class << self
       def size(io = $stderr)
