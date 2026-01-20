@@ -74,6 +74,7 @@
           installPhase = ''
             mkdir -p $out/bin
             cp try.rb $out/bin/try
+            cp -r lib $out/bin/
             chmod +x $out/bin/try
 
             wrapProgram $out/bin/try \
