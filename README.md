@@ -37,7 +37,7 @@ Then add to your shell:
 eval "$(try init)"
 
 # Fish - add to config.fish
-eval (try init | string collect)
+try init | source
 ```
 
 ### Quick Start (Manual)
@@ -52,7 +52,7 @@ chmod +x ~/.local/try.rb
 echo 'eval "$(ruby ~/.local/try.rb init ~/src/tries)"' >> ~/.zshrc
 
 # for fish shell users
-echo 'eval (~/.local/try.rb init ~/src/tries | string collect)' >> ~/.config/fish/config.fish
+echo '~/.local/try.rb init ~/src/tries | source' >> ~/.config/fish/config.fish
 ```
 
 ## The Problem
@@ -112,9 +112,9 @@ Not just substring matching - it's smart:
 - Fish:
 
   ```fish
-  eval (~/.local/try.rb init | string collect)
+  ~/.local/try.rb init | source
   # or pick a path
-  eval (~/.local/try.rb init ~/src/tries | string collect)
+  ~/.local/try.rb init ~/src/tries | source
   ```
 
 Notes:
@@ -232,9 +232,9 @@ After installation, add to your shell:
 - Fish:
 
   ```fish
-  eval "(try init | string collect)"
+  try init | source
   # or pick a path
-  eval "(try init ~/src/tries | string collect)"
+  try init ~/src/tries | source
   ```
 
 ## Why Ruby?
