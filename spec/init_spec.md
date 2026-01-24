@@ -44,8 +44,8 @@ Key elements:
 
 ```fish
 function try
-  set -l out (/path/to/try exec --path '/default/tries/path' $argv 2>/dev/tty)
-  if test $status -eq 0
+  set -l out (/path/to/try exec --path '/default/tries/path' $argv 2>/dev/tty | string collect)
+  if test $pipestatus[1] -eq 0
     eval $out
   else
     echo $out
