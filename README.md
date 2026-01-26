@@ -131,6 +131,7 @@ try ./path/to/repo [name]                      # Use another repo as the worktre
 try worktree dir [name]                        # Same as above, explicit CLI form
 try clone https://github.com/user/repo.git  # Clone repo into date-prefixed directory
 try https://github.com/user/repo.git        # Shorthand for clone (same as above)
+try do                                       # Graduate current try dir to ~/Work
 try --help                                   # See all options
 ```
 
@@ -165,6 +166,26 @@ Supported git URI formats:
 
 The `.git` suffix is automatically removed from URLs when generating directory names.
 
+### Graduating a Try
+
+When an experiment becomes a real project, `try do` moves it out of the tries directory:
+
+```bash
+$ cd ~/src/tries/2025-08-17-redis-pool
+$ try do
+
+  From: ~/src/tries/2025-08-17-redis-pool
+  To:   ~/Work/redis-pool
+
+Name [redis-pool]:
+```
+
+- Strips the date prefix to propose a clean name
+- Moves the directory to `~/Work` (configurable via `TRY_DO_PATH`)
+- Leaves a symlink behind so it still appears in the TUI with a ⭐
+- Initializes a git repo if one doesn't already exist
+- Works from any subdirectory within the try
+
 ### Keyboard Shortcuts
 
 - `↑/↓` or `Ctrl-P/N/J/K` - Navigate
@@ -183,6 +204,14 @@ export TRY_PATH=~/code/sketches
 ```
 
 Default: `~/src/tries`
+
+Set `TRY_DO_PATH` to change where graduated projects land:
+
+```bash
+export TRY_DO_PATH=~/projects
+```
+
+Default: `~/Work`
 
 ## Nix
 
@@ -259,7 +288,7 @@ A: Because you have 200 directories and can't remember if you called it `test-re
 A: fzf is great for files. This is specifically for project directories, with time-awareness and auto-creation built in.
 
 **Q: Can I use this for real projects?**
-A: You can, but it's designed for experiments. Real projects deserve real names in real locations.
+A: It's designed for experiments. When one sticks, `try do` graduates it to a permanent home with a clean name.
 
 **Q: What if I have thousands of experiments?**
 A: First, welcome to the club. Second, it handles it fine - the scoring algorithm ensures relevant stuff stays on top.

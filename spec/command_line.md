@@ -98,6 +98,46 @@ try . <name>              # Shorthand (requires name)
 - Returns shell script to cd into worktree
 - `try .` without a name is NOT supported (too easy to invoke accidentally)
 
+### do
+
+Move a try directory to a permanent work location.
+
+```
+try do
+try exec do
+```
+
+**Arguments:**
+- None. Operates on the current working directory.
+
+**Behavior:**
+- Must be run from inside a try directory (or subdirectory of one)
+- Extracts the immediate child directory of the tries path
+- Strips date prefix (`YYYY-MM-DD-`) to propose a clean name
+- Prompts for name confirmation (enter to accept, or type a new name)
+- Checks destination doesn't already exist
+- Leaves a symlink at the original location pointing to the new path
+- Graduated entries appear with ⭐ instead of 📁 in the TUI
+- Returns shell script to move directory and ensure git is initialized
+- Errors if the entry is already a symlink (already graduated)
+
+**Examples:**
+```
+$ cd ~/src/tries/2025-08-17-redis-pool
+$ try do
+Name [redis-pool]:
+# Moves to ~/Work/redis-pool, ensures git init
+
+$ try do
+Name [redis-pool]: my-pool
+# Moves to ~/Work/my-pool instead
+```
+
+**Error cases:**
+- Not inside tries directory → error + exit 1
+- At tries root (not in a specific try) → "cd into a try directory first"
+- Destination already exists → error + exit 1
+
 ### init
 
 Output shell function definition for shell integration.
@@ -180,6 +220,7 @@ Commands are chained with `&& \` for readability, with 2-space indent on continu
 | `HOME` | Used to resolve default tries path (`$HOME/src/tries`) |
 | `SHELL` | Used by `init` to detect shell type |
 | `NO_COLOR` | If set, disables colors (equivalent to `--no-colors`) |
+| `TRY_DO_PATH` | Override destination for `try do` (default: `~/Work`) |
 
 ## Defaults
 
@@ -245,6 +286,10 @@ try clone https://github.com/user/repo my-fork
 
 # Create git worktree (from within a repo)
 try worktree feature-branch
+
+# Graduate a try to a permanent project
+cd ~/src/tries/2025-08-17-redis-pool
+try do
 
 # Show version
 try --version
