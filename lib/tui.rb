@@ -190,16 +190,14 @@ module Tui
       leading_escapes = String.new
       in_escape = false
       escape_buf = String.new
-      text_start = 0
 
-      text.each_char.with_index do |ch, i|
+      text.each_char do |ch|
         if in_escape
           escape_buf << ch
           if ch.match?(/[A-Za-z]/)
             leading_escapes << escape_buf
             escape_buf = String.new
             in_escape = false
-            text_start = i + 1
           end
         elsif ch == "\e"
           in_escape = true
@@ -528,6 +526,16 @@ module Tui
     end
 
     def render(io, width)
+      render_line(io, width, trailing_newline: true)
+    end
+
+    def render_no_newline(io, width)
+      render_line(io, width, trailing_newline: false)
+    end
+
+    private
+
+    def render_line(io, width, trailing_newline:)
       buffer = String.new
       buffer << "\r"
       buffer << ANSI::CLEAR_EOL  # Clear line before rendering to remove stale content
@@ -604,82 +612,7 @@ module Tui
       end
 
       buffer << ANSI::RESET
-      buffer << "\n"
-
-      io.write(buffer)
-    end
-
-    def render_no_newline(io, width)
-      buffer = String.new
-      buffer << "\r"
-      buffer << ANSI::CLEAR_EOL
-
-      buffer << background if background && Tui.colors_enabled?
-
-      max_content = width - 1
-      content_width = [width, 1].max
-
-      left_text = @left.to_s(width: content_width)
-      center_text = @center ? @center.to_s(width: content_width) : ""
-      right_text = @right ? @right.to_s(width: content_width) : ""
-
-      # Truncate left to fit line
-      left_text = Metrics.truncate(left_text, max_content) if @truncate && !left_text.empty?
-      left_width = left_text.empty? ? 0 : Metrics.visible_width(left_text)
-
-      # Truncate center text to available space (never wrap)
-      unless center_text.empty?
-        max_center = max_content - left_width - 4
-        if max_center > 0
-          center_text = Metrics.truncate(center_text, max_center)
-        else
-          center_text = ""
-        end
-      end
-      center_width = center_text.empty? ? 0 : Metrics.visible_width(center_text)
-
-      # Calculate available space for right (need at least 1 space gap)
-      used_by_left_center = left_width + center_width + (center_width > 0 ? 2 : 0)
-      available_for_right = max_content - used_by_left_center - 1
-
-      # Truncate right from the LEFT if needed (show trailing portion)
-      right_width = 0
-      unless right_text.empty?
-        right_width = Metrics.visible_width(right_text)
-        if available_for_right <= 0
-          right_text = ""
-          right_width = 0
-        elsif right_width > available_for_right
-          right_text = Metrics.truncate_from_start(right_text, available_for_right)
-          right_width = Metrics.visible_width(right_text)
-        end
-      end
-
-      # Calculate positions
-      center_col = center_text.empty? ? 0 : [(max_content - center_width) / 2, left_width + 1].max
-      right_col = right_text.empty? ? max_content : (max_content - right_width)
-
-      buffer << left_text unless left_text.empty?
-      current_pos = left_width
-
-      unless center_text.empty?
-        gap_to_center = center_col - current_pos
-        buffer << (" " * gap_to_center) if gap_to_center > 0
-        buffer << center_text
-        current_pos = center_col + center_width
-      end
-
-      fill_end = right_text.empty? ? max_content : right_col
-      gap = fill_end - current_pos
-      buffer << (" " * gap) if gap > 0
-
-      unless right_text.empty?
-        buffer << right_text
-        buffer << ANSI::RESET_FG
-      end
-
-      buffer << ANSI::RESET
-      # No newline at end
+      buffer << "\n" if trailing_newline
 
       io.write(buffer)
     end

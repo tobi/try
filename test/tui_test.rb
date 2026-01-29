@@ -318,3 +318,125 @@ class TerminalEnvOverrideTest < TuiTestCase
     assert_equal 80, cols
   end
 end
+
+# -------------------------------------------------------------------
+# Metrics.char_width
+# -------------------------------------------------------------------
+class MetricsCharWidthTest < TuiTestCase
+  def test_ascii_width_is_one
+    assert_equal 1, Tui::Metrics.char_width("a".ord)
+  end
+
+  def test_emoji_width_is_two
+    assert_equal 2, Tui::Metrics.char_width(0x1F4C1)  # folder emoji
+  end
+
+  def test_variation_selector_is_zero
+    assert_equal 0, Tui::Metrics.char_width(0xFE0F)
+  end
+
+  def test_arrow_width_is_one
+    assert_equal 1, Tui::Metrics.char_width(0x2192)  # right arrow
+  end
+
+  def test_emoji_range_upper_boundary
+    assert_equal 2, Tui::Metrics.char_width(0x1FAFF)
+  end
+
+  def test_below_emoji_range
+    assert_equal 1, Tui::Metrics.char_width(0x1F2FF)
+  end
+end
+
+# -------------------------------------------------------------------
+# Metrics.zero_width?
+# -------------------------------------------------------------------
+class MetricsZeroWidthTest < TuiTestCase
+  def test_variation_selector
+    assert Tui::Metrics.zero_width?("\uFE0F")
+  end
+
+  def test_zero_width_space
+    assert Tui::Metrics.zero_width?("\u200B")
+  end
+
+  def test_zwj
+    assert Tui::Metrics.zero_width?("\u200D")
+  end
+
+  def test_combining_diacritical
+    assert Tui::Metrics.zero_width?("\u0300")
+  end
+
+  def test_normal_char_false
+    refute Tui::Metrics.zero_width?("a")
+  end
+
+  def test_emoji_false
+    refute Tui::Metrics.zero_width?("\u{1F4C1}")
+  end
+end
+
+# -------------------------------------------------------------------
+# Metrics.truncate_from_start
+# -------------------------------------------------------------------
+class MetricsTruncateFromStartTest < TuiTestCase
+  def test_no_truncation
+    assert_equal "abcde", Tui::Metrics.truncate_from_start("abcde", 10)
+  end
+
+  def test_truncates_from_left
+    result = Tui::Metrics.truncate_from_start("abcdef", 3)
+    assert_equal "def", result
+  end
+
+  def test_preserves_leading_ansi
+    enable_colors!
+    text = "\e[2mabcdef\e[22m"
+    result = Tui::Metrics.truncate_from_start(text, 3)
+    assert result.start_with?("\e[2m"), "Should preserve leading ANSI"
+    visible = result.gsub(/\e\[[0-9;]*[a-zA-Z]/, '')
+    assert_equal 3, visible.length
+  end
+
+  def test_ansi_in_skipped_portion
+    text = "ab\e[1mcd\e[22mef"
+    result = Tui::Metrics.truncate_from_start(text, 2)
+    visible = result.gsub(/\e\[[0-9;]*[a-zA-Z]/, '')
+    assert_equal 2, visible.length
+  end
+
+  def test_single_char_result
+    result = Tui::Metrics.truncate_from_start("abc", 1)
+    assert_equal "c", result
+  end
+end
+
+# -------------------------------------------------------------------
+# Line.cursor_column
+# -------------------------------------------------------------------
+class LineCursorColumnTest < TuiTestCase
+  def test_cursor_at_start
+    screen = build_screen(width: 40)
+    line = Tui::Line.new(screen, background: nil)
+    line.mark_has_input(5)
+    field = Tui::InputField.new(placeholder: "", text: "abc", cursor: 0)
+    assert_equal 6, line.cursor_column(field, 40)
+  end
+
+  def test_cursor_at_end
+    screen = build_screen(width: 40)
+    line = Tui::Line.new(screen, background: nil)
+    line.mark_has_input(5)
+    field = Tui::InputField.new(placeholder: "", text: "abc", cursor: 3)
+    assert_equal 9, line.cursor_column(field, 40)
+  end
+
+  def test_zero_prefix_width
+    screen = build_screen(width: 40)
+    line = Tui::Line.new(screen, background: nil)
+    line.mark_has_input(0)
+    field = Tui::InputField.new(placeholder: "", text: "ab", cursor: 1)
+    assert_equal 2, line.cursor_column(field, 40)
+  end
+end

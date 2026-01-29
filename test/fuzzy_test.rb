@@ -124,4 +124,46 @@ class FuzzyTest < Minitest::Test
     @fuzzy.match("").limit(2).each { count += 1 }
     assert_equal 2, count
   end
+
+  def test_string_key_access
+    entries = [
+      { "text" => "string-keyed-entry", "base_score" => 2.0 },
+    ]
+    fuzzy = Fuzzy.new(entries)
+    results = fuzzy.match("string").to_a
+    refute_empty results
+    assert_equal "string-keyed-entry", results.first[0]["text"]
+  end
+
+  def test_string_base_score_key
+    entries = [
+      { "text" => "alpha", "base_score" => 10.0 },
+      { "text" => "alphabravo", "base_score" => 1.0 },
+    ]
+    fuzzy = Fuzzy.new(entries)
+    results = fuzzy.match("alpha").to_a
+    # Higher base_score should rank first
+    assert_equal "alpha", results.first[0]["text"]
+  end
+
+  def test_word_boundary_at_position_zero
+    entries = [{ text: "alpha", base_score: 0 }]
+    fuzzy = Fuzzy.new(entries)
+    results = fuzzy.match("a").to_a
+    _, positions, score = results.first
+    assert_equal [0], positions
+    # Position 0 is a word boundary, so should get boundary bonus
+    # Score should be > base(0) + match(1.0) + density + length
+    assert score > 0
+  end
+
+  def test_match_positions_are_arrays
+    results = @fuzzy.match("proj").to_a
+    results.each do |_entry, positions, _score|
+      assert_kind_of Array, positions
+      # Should be convertible to Set for highlight_with_positions
+      set = positions.to_set
+      assert_kind_of Set, set
+    end
+  end
 end

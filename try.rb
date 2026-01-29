@@ -3,6 +3,7 @@
 require 'io/console'
 require 'time'
 require 'fileutils'
+require 'set'
 require_relative 'lib/tui'
 require_relative 'lib/fuzzy'
 
@@ -98,7 +99,11 @@ class TrySelector
         next if entry.start_with?('.')
 
         path = File.join(@base_path, entry)
-        stat = File.stat(path)
+        begin
+          stat = File.stat(path)
+        rescue Errno::ENOENT, Errno::EACCES
+          next
+        end
 
         # Only include directories
         next unless stat.directory?
@@ -148,11 +153,17 @@ class TrySelector
     load_all_tries
     @fuzzy ||= Fuzzy.new(@all_tries)
 
+    # Cache results - only re-match when query changes
+    if @last_query == @input_buffer && @cached_results
+      return @cached_results
+    end
+
+    @last_query = @input_buffer.dup
     results = []
     @fuzzy.match(@input_buffer).each do |entry, positions, score|
       results << TryEntry.new(entry, score, positions)
     end
-    results
+    @cached_results = results
   end
 
   def main_loop
@@ -192,9 +203,9 @@ class TrySelector
         # Do nothing
       when "\e[D"  # Left arrow - ignore
         # Do nothing
-      when "\x7F", "\b"  # Backspace
+      when "\x7F", "\b", "\x08"  # Backspace / Ctrl-H
         if @input_cursor_pos > 0
-          @input_buffer = @input_buffer[0...(@input_cursor_pos-1)] + @input_buffer[@input_cursor_pos..-1]
+          @input_buffer = @input_buffer[0...(@input_cursor_pos-1)] + @input_buffer[@input_cursor_pos..]
           @input_cursor_pos -= 1
         end
         @cursor_pos = 0  # Reset list selection when typing
@@ -206,32 +217,12 @@ class TrySelector
         @input_cursor_pos = [@input_cursor_pos - 1, 0].max
       when "\x06"  # Ctrl-F - forward char
         @input_cursor_pos = [@input_cursor_pos + 1, @input_buffer.length].min
-      when "\x08"  # Ctrl-H - backward delete char (same as backspace)
-        if @input_cursor_pos > 0
-          @input_buffer = @input_buffer[0...(@input_cursor_pos-1)] + @input_buffer[@input_cursor_pos..-1]
-          @input_cursor_pos -= 1
-        end
-        @cursor_pos = 0
       when "\x0B"  # Ctrl-K - kill to end of line
         @input_buffer = @input_buffer[0...@input_cursor_pos]
       when "\x17"  # Ctrl-W - delete word backward (alphanumeric)
         if @input_cursor_pos > 0
-          # Start from cursor position and move backward
-          pos = @input_cursor_pos - 1
-
-          # Skip trailing non-alphanumeric
-          while pos >= 0 && @input_buffer[pos] !~ /[a-zA-Z0-9]/
-            pos -= 1
-          end
-
-          # Skip backward over alphanumeric chars
-          while pos >= 0 && @input_buffer[pos] =~ /[a-zA-Z0-9]/
-            pos -= 1
-          end
-
-          # Delete from pos+1 to cursor
-          new_pos = pos + 1
-          @input_buffer = @input_buffer[0...new_pos] + @input_buffer[@input_cursor_pos..-1]
+          new_pos = word_boundary_backward(@input_buffer, @input_cursor_pos)
+          @input_buffer = @input_buffer[0...new_pos] + @input_buffer[@input_cursor_pos..]
           @input_cursor_pos = new_pos
         end
       when "\x04"  # Ctrl-D - toggle mark for deletion
@@ -266,7 +257,7 @@ class TrySelector
       when String
         # Only accept printable characters, not escape sequences
         if key.length == 1 && key =~ /[a-zA-Z0-9\-\_\. ]/
-          @input_buffer = @input_buffer[0...@input_cursor_pos] + key + @input_buffer[@input_cursor_pos..-1]
+          @input_buffer = @input_buffer[0...@input_cursor_pos] + key + @input_buffer[@input_cursor_pos..]
           @input_cursor_pos += 1
           @cursor_pos = 0  # Reset list selection when typing
         end
@@ -300,8 +291,12 @@ class TrySelector
     return nil if input.nil?
 
     if input == "\e"
-      input << STDIN.read_nonblock(3) rescue ""
-      input << STDIN.read_nonblock(2) rescue ""
+      begin
+        input << STDIN.read_nonblock(3)
+        input << STDIN.read_nonblock(2)
+      rescue IO::WaitReadable, EOFError
+        # No more escape sequence data available
+      end
     end
 
     input
@@ -444,15 +439,25 @@ class TrySelector
   end
 
   def highlight_with_positions(text, positions, offset)
-    result = ""
+    pos_set = positions.is_a?(Set) ? positions : positions.to_set
+    result = String.new
     text.chars.each_with_index do |char, i|
-      if positions.include?(i + offset)
-        result += Tui::Text.highlight(char)
+      if pos_set.include?(i + offset)
+        result << Tui::Text.highlight(char)
       else
-        result += char
+        result << char
       end
     end
     result
+  end
+
+  # Find the position of the previous word boundary for Ctrl-W deletion.
+  # Skips non-alphanumeric chars, then skips alphanumeric chars.
+  def word_boundary_backward(buffer, cursor)
+    pos = cursor - 1
+    pos -= 1 while pos >= 0 && buffer[pos] !~ /[a-zA-Z0-9]/
+    pos -= 1 while pos >= 0 && buffer[pos] =~ /[a-zA-Z0-9]/
+    pos + 1
   end
 
   def format_relative_time(time)
@@ -542,11 +547,9 @@ class TrySelector
         rename_error = nil
       when "\x17"  # Ctrl-W - delete word backward
         if rename_cursor > 0
-          pos = rename_cursor - 1
-          pos -= 1 while pos > 0 && rename_buffer[pos] !~ /[a-zA-Z0-9]/
-          pos -= 1 while pos > 0 && rename_buffer[pos - 1] =~ /[a-zA-Z0-9]/
-          rename_buffer = rename_buffer[0...pos] + rename_buffer[rename_cursor..].to_s
-          rename_cursor = pos
+          new_pos = word_boundary_backward(rename_buffer, rename_cursor)
+          rename_buffer = rename_buffer[0...new_pos] + rename_buffer[rename_cursor..].to_s
+          rename_cursor = new_pos
         end
         rename_error = nil
       when String
@@ -772,6 +775,8 @@ class TrySelector
         @delete_status = "Deleted: #{names}"
         @all_tries = nil  # Clear cache
         @fuzzy = nil
+        @cached_results = nil
+        @last_query = nil
         @marked_for_deletion.clear
         @delete_mode = false
       rescue => e
