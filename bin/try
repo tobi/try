@@ -1,4 +1,5 @@
 #!/usr/bin/env ruby
 # frozen_string_literal: true
 
-require_relative '../try'
+$0 = File.expand_path('../try.rb', __dir__)
+load $0
