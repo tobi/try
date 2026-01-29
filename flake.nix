@@ -64,7 +64,7 @@
       };
 
       perSystem = { config, self', inputs', pkgs, system, ... }: {
-        packages.default = pkgs.callPackage ({ ruby ? pkgs.ruby }: pkgs.stdenv.mkDerivation rec {
+        packages.default = pkgs.callPackage ({ ruby ? pkgs.ruby_3_3 }: pkgs.stdenv.mkDerivation rec {
           pname = "try";
           version = "0.1.0";
 
@@ -74,6 +74,7 @@
           installPhase = ''
             mkdir -p $out/bin
             cp try.rb $out/bin/try
+            cp -r lib $out/bin/
             chmod +x $out/bin/try
 
             wrapProgram $out/bin/try \
