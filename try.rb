@@ -1015,7 +1015,7 @@ if __FILE__ == $0
     fish_script = <<~SHELL
       function try
         set -l out (/usr/bin/env ruby '#{script_path}' exec#{path_arg} $argv 2>/dev/tty | string collect)
-        if test $status -eq 0
+        if test $pipestatus[1] -eq 0
           eval $out
         else
           echo $out
