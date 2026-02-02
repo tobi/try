@@ -36,12 +36,11 @@ else
 fi
 
 # Test: Spaces normalized to dashes in rename
-# Note: TYPE= values are uppercased by the token parser, so we check for uppercase
 output=$(try_run --path="$RVAL_DIR" --and-keys='CTRL-R,CTRL-A,CTRL-K,TYPE=new name here,ENTER' exec 2>/dev/null)
-if echo "$output" | grep -q "NEW-NAME-HERE"; then
+if echo "$output" | grep -q "new-name-here"; then
     pass
 else
-    fail "Spaces should be normalized to dashes" "NEW-NAME-HERE" "$output" "rename_validation"
+    fail "Spaces should be normalized to dashes" "new-name-here" "$output" "rename_validation"
 fi
 
 # Test: Rename no-op (same name) exits cleanly

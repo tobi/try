@@ -965,8 +965,9 @@ if __FILE__ == $0
         when 'CTRL-R', 'CTRLR' then keys << "\x12"
         when 'CTRL-T', 'CTRLT' then keys << "\x14"
         when 'CTRL-W', 'CTRLW' then keys << "\x17"
-        when /^TYPE=(.*)$/
-          $1.each_char { |ch| keys << ch }
+        when /^TYPE=/
+          # Extract value from original token (not uppercased) to preserve case
+          tok.sub(/^TYPE=/i, '').each_char { |ch| keys << ch }
         else
           keys << tok if tok.length == 1
         end
