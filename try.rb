@@ -125,6 +125,7 @@ class TrySelector
           basename: entry,
           path: path,
           is_new: false,
+          symlink: File.symlink?(path),
           ctime: stat.ctime,
           mtime: mtime,
           base_score: base_score
@@ -392,7 +393,7 @@ class TrySelector
 
     line = screen.body.add_line(background: background)
     line.write << (is_selected ? Tui::Text.highlight("→ ") : "  ")
-    line.write << (is_marked ? emoji("🗑️") : emoji("📁")) << " "
+    line.write << (is_marked ? emoji("🗑️") : (entry[:symlink] ? emoji("⭐") : emoji("📁"))) << " "
 
     plain_name, rendered_name = formatted_entry_name(entry)
     prefix_width = 5
@@ -775,11 +776,13 @@ class TrySelector
         # Validate all paths first
         validated_paths = []
         marked_items.each do |item|
-          target_real = File.realpath(item[:path])
-          unless target_real.start_with?(base_real + "/")
-            raise "Safety check failed: #{target_real} is not inside #{base_real}"
+          unless File.symlink?(item[:path])
+            target_real = File.realpath(item[:path])
+            unless target_real.start_with?(base_real + "/")
+              raise "Safety check failed: #{target_real} is not inside #{base_real}"
+            end
           end
-          validated_paths << { path: target_real, basename: item[:basename] }
+          validated_paths << { path: item[:path], basename: item[:basename] }
         end
 
         # Return delete action with all paths
@@ -824,24 +827,28 @@ if __FILE__ == $0
         try [query]           Interactive directory selector
         try clone <url>       Clone repo into dated directory
         try worktree <name>   Create worktree from current git repo
+        try do                Graduate try dir to permanent project
         try --help            Show this help
 
       Commands:
         init [path]           Output shell function definition
         clone <url> [name]    Clone git repo into date-prefixed directory
         worktree <name>       Create worktree in dated directory
+        do                    Move current try dir to work directory
 
       Examples:
         try                   Open interactive selector
         try project           Selector with initial filter
         try clone https://github.com/user/repo
         try worktree feature-branch
+        try do                Move current try to ~/Work (prompts for name)
 
       Manual mode (without alias):
         try exec [query]      Output shell script to eval
 
       Defaults:
         Default path: ~/src/tries
+        Default do path: ~/Work (TRY_DO_PATH)
         Current: #{TrySelector::TRY_PATH}
     HELP
     STDERR.print(text)
@@ -922,6 +929,7 @@ if __FILE__ == $0
   # Extract all options BEFORE getting command (they can appear anywhere)
   tries_path = extract_option_with_value!(ARGV, '--path') || TrySelector::TRY_PATH
   tries_path = File.expand_path(tries_path)
+  do_path = ENV['TRY_DO_PATH'] || File.expand_path("~/Work")
 
   # Test-only flags (undocumented; aid acceptance tests)
   # Must be extracted before command shift since they can come before command
@@ -1117,6 +1125,56 @@ if __FILE__ == $0
     end
   end
 
+  def cmd_do!(tries_path, do_path)
+    cwd = begin; File.realpath(Dir.pwd); rescue; Dir.pwd; end
+    tries_real = begin; File.realpath(tries_path); rescue; tries_path; end
+
+    # Shells preserve the unresolved path in PWD, which lets us detect
+    # when cwd is reached via a symlink inside tries_path
+    cwd_unresolved = ENV['PWD'] || cwd
+    use_unresolved = !cwd.start_with?(tries_real + "/") &&
+                     cwd_unresolved.start_with?(tries_real + "/")
+    effective_cwd = use_unresolved ? cwd_unresolved : cwd
+
+    unless effective_cwd.start_with?(tries_real + "/")
+      if effective_cwd == tries_real || cwd == tries_real
+        warn "Error: cd into a try directory first"
+      else
+        warn "Error: not inside tries directory (#{tries_real})"
+      end
+      exit 1
+    end
+
+    relative = effective_cwd.sub(tries_real + "/", "")
+    try_dir_name = relative.split("/").first
+    src = File.join(tries_real, try_dir_name)
+
+    if File.symlink?(src)
+      warn "Error: #{try_dir_name} is already graduated (#{File.readlink(src)})"
+      exit 1
+    end
+
+    clean_name = try_dir_name.sub(/^\d{4}-\d{2}-\d{2}-/, "")
+
+    STDERR.puts
+    STDERR.puts "  From: #{src}"
+    STDERR.puts "  To:   #{File.join(do_path, clean_name)}"
+    STDERR.puts
+
+    STDERR.print "Name [#{clean_name}]: "
+    STDERR.flush
+    input = STDIN.gets&.chomp.to_s
+    name = input.empty? ? clean_name : input.gsub(/\s+/, '-')
+
+    dest = File.join(do_path, name)
+    if File.exist?(dest)
+      warn "Error: destination already exists: #{dest}"
+      exit 1
+    end
+
+    script_do(src, dest)
+  end
+
   # --- Shell script helpers ---
   SCRIPT_WARNING = "# if you can read this, you didn't launch try from an alias. run try --help."
 
@@ -1168,6 +1226,17 @@ if __FILE__ == $0
     paths.each { |item| cmds << "test -d #{q(item[:basename])} && rm -rf #{q(item[:basename])}" }
     cmds << "( cd #{q(Dir.pwd)} 2>/dev/null || cd \"$HOME\" )"
     cmds
+  end
+
+  def script_do(src, dest)
+    [
+      "mkdir -p #{q(File.dirname(dest))}",
+      "mv #{q(src)} #{q(dest)}",
+      "ln -s #{q(dest)} #{q(src)}",
+      "cd #{q(dest)}",
+      "test -d .git || git init",
+      "cd #{q(dest)}"
+    ]
   end
 
   def script_rename(base_path, old_name, new_name)
@@ -1258,6 +1327,9 @@ if __FILE__ == $0
       repo_dir = repo && repo != 'dir' ? File.expand_path(repo) : Dir.pwd
       full_path = worktree_path(tries_path, repo_dir, ARGV.join(' '))
       emit_script(script_worktree(full_path, repo_dir == Dir.pwd ? nil : repo_dir))
+    when 'do'
+      ARGV.shift
+      emit_script(cmd_do!(tries_path, do_path))
     when 'cd'
       ARGV.shift
       script = cmd_cd!(ARGV, tries_path, and_type, and_exit, and_keys, and_confirm)
@@ -1284,6 +1356,9 @@ if __FILE__ == $0
     full_path = worktree_path(tries_path, repo_dir, ARGV.join(' '))
     # Explicit worktree command always emits worktree script
     emit_script(script_worktree(full_path, repo_dir == Dir.pwd ? nil : repo_dir))
+    exit 0
+  when 'do'
+    emit_script(cmd_do!(tries_path, do_path))
     exit 0
   else
     # Default: try [query] - same as try exec [query]
