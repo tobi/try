@@ -40,6 +40,10 @@ module Tui
     end
   end
 
+  # Precompiled regexes used in hot paths
+  ANSI_STRIP_RE = /\e\[[0-9;]*[A-Za-z]/
+  ESCAPE_TERMINATOR_RE = /[A-Za-z]/
+
   module ANSI
     CLEAR_EOL = "\e[K"
     CLEAR_EOS = "\e[J"
@@ -98,13 +102,15 @@ module Tui
 
     # Optimized width calculation - avoids per-character method calls
     def visible_width(text)
+      has_escape = text.include?("\e")
+
       # Fast path: pure ASCII with no escapes
-      if text.bytesize == text.length && !text.include?("\e")
+      if !has_escape && text.bytesize == text.length
         return text.length
       end
 
       # Strip ANSI escapes only if present
-      stripped = text.include?("\e") ? text.gsub(/\e\[[0-9;]*[A-Za-z]/, '') : text
+      stripped = has_escape ? text.gsub(ANSI_STRIP_RE, '') : text
 
       # Fast path after stripping: pure ASCII
       if stripped.bytesize == stripped.length
@@ -156,9 +162,9 @@ module Tui
       text.each_char do |ch|
         if in_escape
           escape_buf << ch
-          if ch.match?(/[A-Za-z]/)
+          if ch.match?(ESCAPE_TERMINATOR_RE)
             truncated << escape_buf
-            escape_buf = String.new
+            escape_buf.clear
             in_escape = false
           end
           next
@@ -166,7 +172,8 @@ module Tui
 
         if ch == "\e"
           in_escape = true
-          escape_buf = ch
+          escape_buf.clear
+          escape_buf << ch
           next
         end
 
@@ -194,14 +201,15 @@ module Tui
       text.each_char do |ch|
         if in_escape
           escape_buf << ch
-          if ch.match?(/[A-Za-z]/)
+          if ch.match?(ESCAPE_TERMINATOR_RE)
             leading_escapes << escape_buf
-            escape_buf = String.new
+            escape_buf.clear
             in_escape = false
           end
         elsif ch == "\e"
           in_escape = true
-          escape_buf = ch
+          escape_buf.clear
+          escape_buf << ch
         else
           # First non-escape character, stop collecting leading escapes
           break
@@ -217,7 +225,7 @@ module Tui
       text.each_char do |ch|
         if in_escape
           result << ch if skipped >= chars_to_skip
-          in_escape = false if ch.match?(/[A-Za-z]/)
+          in_escape = false if ch.match?(ESCAPE_TERMINATOR_RE)
           next
         end
 
@@ -725,15 +733,8 @@ module Tui
 
     # Fast width calculation using precomputed emoji widths
     def visible_width(rendered_str)
-      if @has_wide
-        # Has emoji - use delta: string length + extra width from wide chars
-        stripped = rendered_str.include?("\e") ? rendered_str.gsub(/\e\[[0-9;]*[A-Za-z]/, '') : rendered_str
-        stripped.length + @width_delta
-      else
-        # Pure ASCII - just string length
-        stripped = rendered_str.include?("\e") ? rendered_str.gsub(/\e\[[0-9;]*[A-Za-z]/, '') : rendered_str
-        stripped.length
-      end
+      stripped = rendered_str.include?("\e") ? rendered_str.gsub(ANSI_STRIP_RE, '') : rendered_str
+      @has_wide ? stripped.length + @width_delta : stripped.length
     end
 
     def empty?

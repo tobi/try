@@ -68,19 +68,23 @@ class Fuzzy
         results << [entry.data, positions, score]
       end
 
-      # Sort by score descending
-      results.sort_by! { |_, _, score| -score }
-
-      # Apply limit
-      results = results.first(@limit) if @limit
+      if @limit && @limit < results.length
+        # Partial sort: O(n log k) via heap selection instead of full O(n log n) sort
+        results = results.max_by(@limit) { |_, _, score| score }
+      else
+        results.sort_by! { |_, _, score| -score }
+      end
 
       results.each(&block)
     end
 
     private
 
-    # Pre-computed sqrt values for proximity bonus (gap 0-15)
-    SQRT_TABLE = (0..16).map { |n| 2.0 / Math.sqrt(n + 1) }.freeze
+    # Pre-compiled regex for word boundary detection
+    WORD_BOUNDARY_RE = /[^a-z0-9]/
+
+    # Pre-computed sqrt values for proximity bonus (gap 0-63)
+    SQRT_TABLE = (0..64).map { |n| 2.0 / Math.sqrt(n + 1) }.freeze
 
     def calculate_match(entry)
       positions = []
@@ -107,14 +111,14 @@ class Fuzzy
         score += 1.0
 
         # Word boundary bonus (start of string or after non-alphanumeric)
-        if found == 0 || text[found - 1].match?(/[^a-z0-9]/)
+        if found == 0 || text[found - 1].match?(WORD_BOUNDARY_RE)
           score += 1.0
         end
 
         # Proximity bonus (consecutive chars score higher)
         if last_pos >= 0
           gap = found - last_pos - 1
-          score += gap < 16 ? SQRT_TABLE[gap] : (2.0 / Math.sqrt(gap + 1))
+          score += gap < 64 ? SQRT_TABLE[gap] : (2.0 / Math.sqrt(gap + 1))
         end
 
         last_pos = found

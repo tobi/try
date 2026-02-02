@@ -11,6 +11,10 @@ class TrySelector
   include Tui::Helpers
   TRY_PATH = ENV['TRY_PATH'] || File.expand_path("~/src/tries")
 
+  # Precompiled regex constants
+  INPUT_CHAR_RE = /[a-zA-Z0-9\-\_\. ]/
+  WORD_CHAR_RE = /[a-zA-Z0-9]/
+
   def initialize(search_term = "", base_path: TRY_PATH, initial_input: nil, test_render_once: false, test_no_cls: false, test_keys: nil, test_confirm: nil)
     @search_term = search_term.gsub(/\s+/, '-')
     @cursor_pos = 0  # Navigation cursor (list position)
@@ -158,9 +162,11 @@ class TrySelector
       return @cached_results
     end
 
-    @last_query = @input_buffer.dup
+    @last_query = @input_buffer
+    height = IO.console&.winsize&.first || 24
+    max_results = [height - 6, 3].max
     results = []
-    @fuzzy.match(@input_buffer).each do |entry, positions, score|
+    @fuzzy.match(@input_buffer).limit(max_results).each do |entry, positions, score|
       results << TryEntry.new(entry, score, positions)
     end
     @cached_results = results
@@ -203,7 +209,7 @@ class TrySelector
         # Do nothing
       when "\e[D"  # Left arrow - ignore
         # Do nothing
-      when "\x7F", "\b", "\x08"  # Backspace / Ctrl-H
+      when "\x7F", "\b"  # Backspace (DEL and BS)
         if @input_cursor_pos > 0
           @input_buffer = @input_buffer[0...(@input_cursor_pos-1)] + @input_buffer[@input_cursor_pos..]
           @input_cursor_pos -= 1
@@ -256,7 +262,7 @@ class TrySelector
         end
       when String
         # Only accept printable characters, not escape sequences
-        if key.length == 1 && key =~ /[a-zA-Z0-9\-\_\. ]/
+        if key.length == 1 && key.match?(INPUT_CHAR_RE)
           @input_buffer = @input_buffer[0...@input_cursor_pos] + key + @input_buffer[@input_cursor_pos..]
           @input_cursor_pos += 1
           @cursor_pos = 0  # Reset list selection when typing
@@ -441,11 +447,18 @@ class TrySelector
   def highlight_with_positions(text, positions, offset)
     pos_set = positions.is_a?(Set) ? positions : positions.to_set
     result = String.new
-    text.chars.each_with_index do |char, i|
+    chars = text.chars
+    i = 0
+    while i < chars.length
       if pos_set.include?(i + offset)
-        result << Tui::Text.highlight(char)
+        # Batch consecutive highlighted characters
+        batch_start = i
+        i += 1
+        i += 1 while i < chars.length && pos_set.include?(i + offset)
+        result << Tui::Text.highlight(chars[batch_start...i].join)
       else
-        result << char
+        result << chars[i]
+        i += 1
       end
     end
     result
@@ -455,8 +468,8 @@ class TrySelector
   # Skips non-alphanumeric chars, then skips alphanumeric chars.
   def word_boundary_backward(buffer, cursor)
     pos = cursor - 1
-    pos -= 1 while pos >= 0 && buffer[pos] !~ /[a-zA-Z0-9]/
-    pos -= 1 while pos >= 0 && buffer[pos] =~ /[a-zA-Z0-9]/
+    pos -= 1 while pos >= 0 && !buffer[pos].match?(WORD_CHAR_RE)
+    pos -= 1 while pos >= 0 && buffer[pos].match?(WORD_CHAR_RE)
     pos + 1
   end
 
