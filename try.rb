@@ -806,7 +806,7 @@ end
 # Main execution with OptionParser subcommands
 if __FILE__ == $0
 
-  VERSION = "1.7.1"
+  VERSION = "1.8.1"
 
   def print_global_help
     text = <<~HELP
