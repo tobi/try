@@ -55,6 +55,12 @@
 - If adding logic, add tests to the spec system under `spec/tests/`.
 - Prefer testing the printed shell via regex matches. When adding tokens, add simple tests to validate token expansion and non-TTY flush behavior.
 
+## Version Bumps
+When bumping the version, update **all three** locations and tag:
+1. `try.rb`: `VERSION = "X.Y.Z"` constant.
+2. `VERSION`: Plain-text file in repo root (single line).
+3. `git tag vX.Y.Z && git push origin vX.Y.Z` after committing.
+
 ## Commit & Pull Request Guidelines
 - Commits: short, imperative subject; optional scope. Examples:
   - `fix: reset token clears colors`
