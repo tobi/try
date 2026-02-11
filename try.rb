@@ -73,10 +73,7 @@ class TrySelector
   def setup_terminal
     unless @test_no_cls
       # Switch to alternate screen buffer (like vim, less, etc.)
-      STDERR.print(Tui::ANSI::ALT_SCREEN_ON)
-      STDERR.print(Tui::ANSI::CLEAR_SCREEN)
-      STDERR.print(Tui::ANSI::HOME)
-      STDERR.print(Tui::ANSI::CURSOR_BLINK)
+      STDERR.print("#{Tui::ANSI::ALT_SCREEN_ON}#{Tui::ANSI::CURSOR_BLINK}")
     end
 
     @old_winch_handler = Signal.trap('WINCH') { @needs_redraw = true }
@@ -806,7 +803,7 @@ end
 # Main execution with OptionParser subcommands
 if __FILE__ == $0
 
-  VERSION = "1.8.1"
+  VERSION = "1.8.2"
 
   def print_global_help
     text = <<~HELP

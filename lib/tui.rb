@@ -381,10 +381,9 @@ module Tui
 
     def flush
       refresh_size
-      begin
-        @io.write(ANSI::HOME)
-      rescue IOError
-      end
+
+      # Build entire frame in a single buffer to avoid flicker from partial writes
+      buf = String.new(ANSI::HOME)
 
       cursor_row = nil
       cursor_col = nil
@@ -396,7 +395,7 @@ module Tui
           cursor_row = current_row + 1
           cursor_col = line.cursor_column(@input_field, @width)
         end
-        line.render(@io, @width)
+        line.render(buf, @width)
         current_row += 1
       end
 
@@ -412,7 +411,7 @@ module Tui
           cursor_row = current_row + 1
           cursor_col = line.cursor_column(@input_field, @width)
         end
-        line.render(@io, @width)
+        line.render(buf, @width)
         current_row += 1
         body_rendered += 1
       end
@@ -425,9 +424,9 @@ module Tui
       gap.times do |i|
         # Last gap line without newline if no footer follows
         if i == gap - 1 && @footer.lines.empty?
-          @io.write(blank_line_no_newline)
+          buf << blank_line_no_newline
         else
-          @io.write(blank_line)
+          buf << blank_line
         end
         current_row += 1
       end
@@ -440,23 +439,29 @@ module Tui
         end
         # Last line: don't write \n to avoid scrolling
         if idx == footer_lines - 1
-          line.render_no_newline(@io, @width)
+          line.render_no_newline(buf, @width)
         else
-          line.render(@io, @width)
+          line.render(buf, @width)
         end
         current_row += 1
       end
 
       # Position cursor at input field if present, otherwise hide cursor
       if cursor_row && cursor_col && @input_field
-        @io.write("\e[#{cursor_row};#{cursor_col}H")
-        @io.write(ANSI::SHOW)
+        buf << "\e[#{cursor_row};#{cursor_col}H"
+        buf << ANSI::SHOW
       else
-        @io.write(ANSI::HIDE)
+        buf << ANSI::HIDE
       end
 
-      @io.write(ANSI::RESET)
-      @io.flush
+      buf << ANSI::RESET
+
+      # Single write for the entire frame - eliminates flicker
+      begin
+        @io.write(buf)
+        @io.flush
+      rescue IOError
+      end
     ensure
       clear
     end
@@ -622,7 +627,7 @@ module Tui
       buffer << ANSI::RESET
       buffer << "\n" if trailing_newline
 
-      io.write(buffer)
+      io << buffer
     end
   end
 
