@@ -10,6 +10,7 @@ require_relative 'lib/fuzzy'
 class TrySelector
   include Tui::Helpers
   TRY_PATH = ENV['TRY_PATH'] || File.expand_path("~/src/tries")
+  TRY_PROJECTS = ENV['TRY_PROJECTS']
 
   # Precompiled regex constants
   INPUT_CHAR_RE = /[a-zA-Z0-9\-\_\. ]/
@@ -248,6 +249,11 @@ class TrySelector
           run_rename_dialog(tries[@cursor_pos])
           break if @selected
         end
+      when "\x07"  # Ctrl-G - graduate/ascend selected entry
+        if @cursor_pos < tries.length
+          run_ascend_dialog(tries[@cursor_pos])
+          break if @selected
+        end
       when "\x03", "\e"  # Ctrl-C or ESC
         if @delete_mode
           # Exit delete mode, clear marks
@@ -344,7 +350,7 @@ class TrySelector
       end
     else
       screen.footer.add_line do |line|
-        line.center.write_dim("↑/↓: Navigate  Enter: Select  ^R: Rename  ^D: Delete  Esc: Cancel")
+        line.center.write_dim("↑/↓: Navigate  Enter: Select  ^R: Rename  ^G: Graduate  ^D: Delete  Esc: Cancel")
       end
     end
 
@@ -625,6 +631,142 @@ class TrySelector
     true
   end
 
+  # Ascend dialog - promote a try to a permanent project directory
+  def run_ascend_dialog(entry)
+    @delete_mode = false
+    @marked_for_deletion.clear
+
+    current_name = entry[:basename]
+
+    # Strip date prefix for the default project name
+    project_name = current_name.sub(/^\d{4}-\d{2}-\d{2}-/, '')
+
+    # Compute default destination directory
+    projects_dir = if TRY_PROJECTS
+      File.expand_path(TRY_PROJECTS)
+    else
+      File.dirname(@base_path)
+    end
+
+    ascend_buffer = File.join(projects_dir, project_name)
+    ascend_cursor = ascend_buffer.length
+    ascend_error = nil
+
+    loop do
+      render_ascend_dialog(current_name, ascend_buffer, ascend_cursor, ascend_error, projects_dir)
+
+      ch = read_key
+      case ch
+      when "\r"  # Enter - confirm
+        result = finalize_ascend(entry, ascend_buffer)
+        if result == true
+          break
+        else
+          ascend_error = result
+        end
+      when "\e", "\x03"  # ESC or Ctrl-C - cancel
+        break
+      when "\x7F", "\b"  # Backspace
+        if ascend_cursor > 0
+          ascend_buffer = ascend_buffer[0...(ascend_cursor - 1)] + ascend_buffer[ascend_cursor..].to_s
+          ascend_cursor -= 1
+        end
+        ascend_error = nil
+      when "\x01"  # Ctrl-A - start of line
+        ascend_cursor = 0
+      when "\x05"  # Ctrl-E - end of line
+        ascend_cursor = ascend_buffer.length
+      when "\x02"  # Ctrl-B - back one char
+        ascend_cursor = [ascend_cursor - 1, 0].max
+      when "\x06"  # Ctrl-F - forward one char
+        ascend_cursor = [ascend_cursor + 1, ascend_buffer.length].min
+      when "\x0B"  # Ctrl-K - kill to end
+        ascend_buffer = ascend_buffer[0...ascend_cursor]
+        ascend_error = nil
+      when "\x17"  # Ctrl-W - delete word backward
+        if ascend_cursor > 0
+          new_pos = word_boundary_backward(ascend_buffer, ascend_cursor)
+          ascend_buffer = ascend_buffer[0...new_pos] + ascend_buffer[ascend_cursor..].to_s
+          ascend_cursor = new_pos
+        end
+        ascend_error = nil
+      when String
+        if ch.length == 1 && ch =~ /[a-zA-Z0-9\-_\.\s\/~]/
+          ascend_buffer = ascend_buffer[0...ascend_cursor] + ch + ascend_buffer[ascend_cursor..].to_s
+          ascend_cursor += 1
+          ascend_error = nil
+        end
+      end
+    end
+
+    @needs_redraw = true
+  end
+
+  def render_ascend_dialog(current_name, ascend_buffer, ascend_cursor, ascend_error, projects_dir)
+    screen = Tui::Screen.new(io: STDERR)
+
+    screen.header.add_line do |line|
+      line.center << emoji("🚀") << Tui::Text.accent("  Graduate try to project")
+    end
+    screen.header.add_line { |line| line.write.write_dim(fill("─")) }
+
+    screen.body.add_line do |line|
+      line.write << emoji("📁") << " #{current_name}"
+    end
+    screen.body.add_line
+
+    env_hint = TRY_PROJECTS ? "$TRY_PROJECTS" : "parent of $TRY_PATH"
+    screen.body.add_line do |line|
+      line.center.write_dim("Destination (#{env_hint}: #{projects_dir})")
+    end
+
+    screen.body.add_line do |line|
+      prefix = "Move to: "
+      line.center.write_dim(prefix)
+      line.center << screen.input("", value: ascend_buffer, cursor: ascend_cursor).to_s
+      input_width = [ascend_buffer.length, ascend_cursor + 1].max
+      prefix_width = Tui::Metrics.visible_width(prefix)
+      max_content = screen.width - 1
+      center_start = (max_content - prefix_width - input_width) / 2
+      line.mark_has_input(center_start + prefix_width)
+    end
+
+    screen.body.add_line
+    screen.body.add_line do |line|
+      line.center.write_dim("A symlink will be left in the tries directory")
+    end
+
+    if ascend_error
+      screen.body.add_line
+      screen.body.add_line { |line| line.center.write_bold(ascend_error) }
+    end
+
+    screen.footer.add_line { |line| line.write.write_dim(fill("─")) }
+    screen.footer.add_line { |line| line.center.write_dim("Enter: Confirm  Esc: Cancel") }
+
+    screen.flush
+  end
+
+  def finalize_ascend(entry, ascend_buffer)
+    dest = ascend_buffer.strip
+    dest = File.expand_path(dest)
+
+    return "Destination cannot be empty" if dest.empty?
+    return "Destination already exists: #{dest}" if File.exist?(dest)
+
+    parent = File.dirname(dest)
+    return "Parent directory does not exist: #{parent}" unless Dir.exist?(parent)
+
+    @selected = {
+      type: :ascend,
+      source: entry[:path],
+      dest: dest,
+      basename: entry[:basename],
+      base_path: @base_path
+    }
+    true
+  end
+
   def handle_selection(try_dir)
     # Select existing try directory
     @selected = { type: :cd, path: try_dir[:path] }
@@ -837,9 +979,18 @@ if __FILE__ == $0
       Manual mode (without alias):
         try exec [query]      Output shell script to eval
 
-      Defaults:
-        Default path: ~/src/tries
-        Current: #{TrySelector::TRY_PATH}
+      Environment:
+        TRY_PATH          Tries directory (default: ~/src/tries)
+        TRY_PROJECTS      Graduate destination (default: parent of TRY_PATH)
+
+      Keyboard:
+        ↑/↓, Ctrl-P/N     Navigate
+        Enter              Select / Create new
+        Ctrl-R             Rename
+        Ctrl-G             Graduate (promote try to project)
+        Ctrl-D             Mark for deletion
+        Ctrl-T             Create new try
+        Esc                Cancel
     HELP
     STDERR.print(text)
   end
@@ -955,6 +1106,7 @@ if __FILE__ == $0
         when 'CTRL-D', 'CTRLD' then keys << "\x04"
         when 'CTRL-E', 'CTRLE' then keys << "\x05"
         when 'CTRL-F', 'CTRLF' then keys << "\x06"
+        when 'CTRL-G', 'CTRLG' then keys << "\x07"
         when 'CTRL-H', 'CTRLH' then keys << "\x08"
         when 'CTRL-K', 'CTRLK' then keys << "\x0B"
         when 'CTRL-N', 'CTRLN' then keys << "\x0E"
@@ -1109,6 +1261,8 @@ if __FILE__ == $0
       script_mkdir_cd(result[:path])
     when :rename
       script_rename(result[:base_path], result[:old], result[:new])
+    when :ascend
+      script_ascend(result[:source], result[:dest], result[:basename], result[:base_path])
     else
       script_cd(result[:path])
     end
@@ -1165,6 +1319,24 @@ if __FILE__ == $0
     paths.each { |item| cmds << "test -d #{q(item[:basename])} && rm -rf #{q(item[:basename])}" }
     cmds << "( cd #{q(Dir.pwd)} 2>/dev/null || cd #{q(base_path)} )"
     cmds
+  end
+
+  def script_ascend(source, dest, basename, base_path)
+    symlink_path = File.join(base_path, basename)
+    # Check if source is a git worktree (has .git file, not directory)
+    git_file = File.join(source, '.git')
+    is_worktree = File.file?(git_file)
+
+    cmds = []
+    if is_worktree
+      # Use git worktree move for proper bookkeeping
+      cmds << "git worktree move #{q(source)} #{q(dest)}"
+    else
+      cmds << "mv #{q(source)} #{q(dest)}"
+    end
+    cmds << "ln -s #{q(dest)} #{q(symlink_path)}"
+    cmds << "echo #{q("Graduated: #{basename} → #{dest}")}"
+    cmds + script_cd(dest)
   end
 
   def script_rename(base_path, old_name, new_name)
