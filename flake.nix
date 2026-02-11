@@ -22,13 +22,13 @@
 
               package = mkOption {
                 type = types.package;
-                default = inputs.self.packages.${pkgs.system}.default;
-                defaultText = literalExpression "inputs.self.packages.\${pkgs.system}.default";
+                default = inputs.self.packages.${pkgs.stdenv.hostPlatform.system}.default;
+                defaultText = literalExpression "inputs.self.packages.\${pkgs.stdenv.hostPlatform.system}.default";
                 description = ''
                   The try package to use. Can be overridden to customize Ruby version:
                   
                   ```nix
-                  programs.try.package = inputs.try.packages.${"$"}{pkgs.system}.default.override {
+                  programs.try.package = inputs.try.packages.${"$"}{pkgs.stdenv.hostPlatform.system}.default.override {
                     ruby = pkgs.ruby_3_3;
                   };
                   ```
