@@ -1163,7 +1163,7 @@ if __FILE__ == $0
   def script_delete(paths, base_path)
     cmds = ["cd #{q(base_path)}"]
     paths.each { |item| cmds << "test -d #{q(item[:basename])} && rm -rf #{q(item[:basename])}" }
-    cmds << "( cd #{q(Dir.pwd)} 2>/dev/null || cd \"$HOME\" )"
+    cmds << "( cd #{q(Dir.pwd)} 2>/dev/null || cd #{q(base_path)} )"
     cmds
   end
 

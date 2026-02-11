@@ -47,11 +47,11 @@ else
     fail "Delete script should check directory exists" "test -d 'name'" "$output" "delete_spec.md#script-components"
 fi
 
-# Test: Delete script ends with PWD restoration
-if echo "$output" | grep -qE 'cd .* \|\| cd "\$HOME"'; then
+# Test: Delete script ends with PWD restoration (falls back to tries base path)
+if echo "$output" | grep -qE 'cd .* \|\| cd '; then
     pass
 else
-    fail "Delete script should restore PWD" "cd ... || cd \$HOME" "$output" "delete_spec.md#script-components"
+    fail "Delete script should restore PWD" "cd ... || cd <base_path>" "$output" "delete_spec.md#script-components"
 fi
 
 # Test: Ctrl-D + Enter with NO cancels
