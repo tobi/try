@@ -66,7 +66,7 @@
       perSystem = { config, self', inputs', pkgs, system, ... }: {
         packages.default = pkgs.callPackage ({ ruby ? pkgs.ruby_3_3 }: pkgs.stdenv.mkDerivation rec {
           pname = "try";
-          version = "0.1.0";
+          version = builtins.replaceStrings ["\n"] [""] (builtins.readFile ./VERSION);
 
           src = inputs.self;
           nativeBuildInputs = [ pkgs.makeBinaryWrapper ];
