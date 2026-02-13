@@ -20,7 +20,7 @@ Instantly navigate through all your experiment directories with:
 - **Fuzzy search** that just works
 - **Smart sorting** - recently used stuff bubbles to the top
 - **Auto-dating** - creates directories like `2025-08-17-redis-experiment`
-- **Zero config** - just one Ruby file, no dependencies
+- **Zero config** - Pure Ruby, no external dependencies
 
 ## Installation
 
@@ -126,16 +126,17 @@ Notes:
 try                                          # Browse all experiments
 try redis                                    # Jump to redis experiment or create new
 try new api                                  # Start with "2025-08-17-new-api"
-try . [name]                                   # Create a dated worktree dir for current repo
-try ./path/to/repo [name]                      # Use another repo as the worktree source
-try worktree dir [name]                        # Same as above, explicit CLI form
-try clone https://github.com/user/repo.git  # Clone repo into date-prefixed directory
-try https://github.com/user/repo.git        # Shorthand for clone (same as above)
+try . [name]                                 # Create a dated worktree dir for current repo
+try ./path/to/repo [name]                    # Use another repo as the worktree source
+try worktree dir [name]                      # Same as "try .", explicit CLI form
+try clone https://github.com/user/repo.git   # Clone repo into date-prefixed directory
+try https://github.com/user/repo.git         # Shorthand for clone (same as above)
 try --help                                   # See all options
+try --version                                # Show version
 ```
 
 Notes on worktrees (`try .` / `try worktree dir`):
-- With a custom [name], uses that; otherwise uses cwd’s basename. Both are prefixed with today’s date.
+- With a custom [name], uses that; otherwise uses cwd's basename. Both are prefixed with today's date.
 - Inside a Git repo: adds a detached HEAD git worktree to the created directory.
 - Outside a repo: simply creates the directory and changes into it.
 
@@ -167,22 +168,45 @@ The `.git` suffix is automatically removed from URLs when generating directory n
 
 ### Keyboard Shortcuts
 
-- `↑/↓` or `Ctrl-P/N/J/K` - Navigate
+- `↑/↓` or `Ctrl-P/N` - Navigate
 - `Enter` - Select or create
 - `Backspace` - Delete character
-- `Ctrl-D` - Delete directory (with confirmation)
+- `Ctrl-D` - Mark directory for deletion (confirm on exit)
+- `Ctrl-R` - Rename selected entry
+- `Ctrl-G` - Graduate (promote try to project)
+- `Ctrl-T` - Create new try immediately
+- `Ctrl-A/E` - Beginning/end of line
+- `Ctrl-B/F` - Backward/forward character
+- `Ctrl-K` - Delete to end of line
+- `Ctrl-W` - Delete word backward
 - `ESC` - Cancel
 - Just type to filter
 
 ## Configuration
 
-Set `TRY_PATH` to change where experiments are stored:
+### Environment Variables
+
+- `TRY_PATH` - Where experiments are stored (default: `~/src/tries`)
+- `TRY_PROJECTS` - Graduate destination for promoted experiments (default: parent of `TRY_PATH`)
+- `NO_COLOR` - Disable colored output when set
 
 ```bash
 export TRY_PATH=~/code/sketches
+export TRY_PROJECTS=~/projects
 ```
 
-Default: `~/src/tries`
+### Command Line Flags
+
+- `--path PATH` - Override the root path for a single invocation
+- `--no-colors` - Disable colored output
+- `--help` / `-h` - Show help
+- `--version` / `-v` - Show version
+
+Examples:
+```bash
+try --path ~/other-tries redis    # Use different root for this command
+try --no-colors                   # Disable colors
+```
 
 ## Nix
 
@@ -239,7 +263,7 @@ After installation, add to your shell:
 
 ## Why Ruby?
 
-- One file, no dependencies
+- Pure Ruby, no external dependencies
 - Works on any system with Ruby (macOS has it built-in)
 - Fast enough for thousands of directories
 - Easy to hack on
@@ -266,7 +290,7 @@ A: First, welcome to the club. Second, it handles it fine - the scoring algorith
 
 ## Contributing
 
-It's one file. If you want to change something, just edit it. Send a PR if you think others would like it too.
+If you want to change something, just edit it. The code is modular and easy to navigate. Send a PR if you think others would like it too.
 
 ## License
 
