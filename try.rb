@@ -1168,7 +1168,9 @@ if __FILE__ == $0
     end
 
     path_arg = tries_path ? " --path '#{tries_path}'" : ""
+    export_line = tries_path ? "export TRY_PATH='#{tries_path}'" : ""
     bash_or_zsh_script = <<~SHELL
+      #{export_line}
       try() {
         local out
         out=$(/usr/bin/env ruby '#{script_path}' exec#{path_arg} "$@" 2>/dev/tty)
@@ -1180,7 +1182,9 @@ if __FILE__ == $0
       }
     SHELL
 
+    fish_export = tries_path ? "set -gx TRY_PATH '#{tries_path}'" : ""
     fish_script = <<~SHELL
+      #{fish_export}
       function try
         set -l out (/usr/bin/env ruby '#{script_path}' exec#{path_arg} $argv 2>/dev/tty | string collect)
         if test $pipestatus[1] -eq 0
