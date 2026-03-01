@@ -54,6 +54,13 @@ else
     fail "Delete script should restore PWD" "cd ... || cd <base_path>" "$output" "delete_spec.md#script-components"
 fi
 
+# Test: PWD restoration must be shell-neutral (no POSIX subshell wrapper)
+if echo "$output" | grep -qE '\( cd .* \|\| cd .* \)'; then
+    fail "Delete script should avoid subshell-wrapped cd restore" "no ( cd ... || cd ... )" "$output" "delete_spec.md#script-components"
+else
+    pass
+fi
+
 # Test: Ctrl-D + Enter with NO cancels
 output=$(try_run --path="$DEL_TEST_DIR" --and-keys='CTRL-D,ENTER,n,o,ENTER' exec 2>/dev/null)
 if echo "$output" | grep -q "rm -rf"; then
