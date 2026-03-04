@@ -1163,11 +1163,13 @@ if __FILE__ == $0
   def cmd_init!(args, tries_path)
     script_path = File.expand_path($0)
 
-    if args[0] && args[0].start_with?('/')
-      tries_path = File.expand_path(args.shift)
+    explicit_path = if args[0] && args[0].start_with?('/')
+      File.expand_path(args.shift)
     end
 
-    path_arg = tries_path ? " --path '#{tries_path}'" : ""
+    # Priority: explicit init argument > $TRY_PATH (runtime) > default
+    default_path = tries_path || File.expand_path("~/src/tries")
+    path_arg = explicit_path ? " --path '#{explicit_path}'" : " --path \"${TRY_PATH:-#{default_path}}\""
     bash_or_zsh_script = <<~SHELL
       try() {
         local out
@@ -1180,9 +1182,10 @@ if __FILE__ == $0
       }
     SHELL
 
+    fish_path_arg = explicit_path ? " --path '#{explicit_path}'" : " --path (if set -q TRY_PATH; echo \"$TRY_PATH\"; else; echo '#{default_path}'; end)"
     fish_script = <<~SHELL
       function try
-        set -l out (/usr/bin/env ruby '#{script_path}' exec#{path_arg} $argv 2>/dev/tty | string collect)
+        set -l out (/usr/bin/env ruby '#{script_path}' exec#{fish_path_arg} $argv 2>/dev/tty | string collect)
         if test $pipestatus[1] -eq 0
           eval $out
         else
