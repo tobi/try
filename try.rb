@@ -74,6 +74,7 @@ class TrySelector
     unless @test_no_cls
       # Switch to alternate screen buffer (like vim, less, etc.)
       STDERR.print(Tui::ANSI::ALT_SCREEN_ON)
+      STDERR.print(Tui::ANSI.set_title("try"))
       STDERR.print(Tui::ANSI::CLEAR_SCREEN)
       STDERR.print(Tui::ANSI::HOME)
       STDERR.print(Tui::ANSI::CURSOR_BLINK)
@@ -806,7 +807,7 @@ end
 # Main execution with OptionParser subcommands
 if __FILE__ == $0
 
-  VERSION = "1.8.1"
+  VERSION = "1.8.2"
 
   def print_global_help
     text = <<~HELP

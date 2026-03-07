@@ -81,6 +81,10 @@ module Tui
       joined = codes.flatten.join(";")
       "\e[#{joined}m"
     end
+
+    def set_title(t)
+      "\e]2;#{t}\a"
+    end
   end
 
   module Palette
