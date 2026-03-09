@@ -945,7 +945,7 @@ end
 # Main execution with OptionParser subcommands
 if __FILE__ == $0
 
-  VERSION = "1.9.0"
+  VERSION = "1.9.1"
 
   def print_global_help
     text = <<~HELP
