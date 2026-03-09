@@ -49,6 +49,11 @@ export TRY_CMD
 export TRY_BIN_PATH
 export SPEC_DIR
 
+# Ensure deterministic style behavior regardless of caller shell env.
+# Individual tests explicitly set NO_COLOR when they need to validate it.
+unset NO_COLOR
+unset NO_COLORS
+
 # Set invariant terminal size for tests (can be overridden by specific tests)
 export TRY_WIDTH=80
 export TRY_HEIGHT=24

@@ -60,7 +60,7 @@ In exec mode, delete outputs a shell script that is evaluated by the shell wrapp
 cd '/path/to/tries' && \
   test -d 'dir-name-1' ]] && rm -rf 'dir-name-1' && \
   test -d 'dir-name-2' ]] && rm -rf 'dir-name-2' && \
-  ( cd '/original/pwd' 2>/dev/null || cd "$HOME" )
+  cd '/original/pwd' 2>/dev/null || cd '/path/to/tries'
 ```
 
 Each command is on its own line, chained with `&& \` for readability, with 2-space indent on continuation lines.
@@ -83,11 +83,11 @@ Each command is on its own line, chained with `&& \` for readability, with 2-spa
 
 3. **PWD restoration**
    ```sh
-     ( cd '/original/pwd' 2>/dev/null || cd "$HOME" )
+    cd '/original/pwd' 2>/dev/null || cd '/path/to/tries'
    ```
    - Attempt to return to original working directory
-   - Fall back to $HOME if original no longer exists
-   - Subshell prevents cd failure from stopping script
+   - Fall back to tries base path if original no longer exists
+   - Avoid shell-specific subshell syntax so output stays shell-neutral
 
 ### Quote Escaping
 
@@ -104,7 +104,7 @@ For deleting two directories from `/home/user/tries`:
 cd '/home/user/tries' && \
   test -d '2025-11-29-old-project' ]] && rm -rf '2025-11-29-old-project' && \
   test -d '2025-11-28-abandoned' ]] && rm -rf '2025-11-28-abandoned' && \
-  ( cd '/home/user/code' 2>/dev/null || cd "$HOME" )
+  cd '/home/user/code' 2>/dev/null || cd '/home/user/tries'
 ```
 
 ## Safety Guarantees
