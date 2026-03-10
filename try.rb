@@ -1176,35 +1176,140 @@ if __FILE__ == $0
       File.expand_path(args.shift)
     end
 
-    # Priority: explicit init argument > $TRY_PATH (runtime) > default
     default_path = tries_path || File.expand_path("~/src/tries")
-    path_arg = explicit_path ? " --path '#{explicit_path}'" : " --path \"${TRY_PATH:-#{default_path}}\""
-    bash_or_zsh_script = <<~SHELL
-      try() {
-        local out
-        out=$(/usr/bin/env ruby '#{script_path}' exec#{path_arg} "$@" 2>/dev/tty)
-        if [ $? -eq 0 ]; then
-          eval "$out"
-        else
-          echo "$out"
-        fi
-      }
-    SHELL
-
-    fish_path_arg = explicit_path ? " --path '#{explicit_path}'" : " --path (if set -q TRY_PATH; echo \"$TRY_PATH\"; else; echo '#{default_path}'; end)"
-    fish_script = <<~SHELL
-      function try
-        set -l out (/usr/bin/env ruby '#{script_path}' exec#{fish_path_arg} $argv 2>/dev/tty | string collect)
-        if test $pipestatus[1] -eq 0
-          eval $out
-        else
-          echo $out
-        end
-      end
-    SHELL
-
-    puts fish? ? fish_script : bash_or_zsh_script
+    shell = fish? ? 'fish' : 'bash'
+    puts init_snippet(shell, script_path, explicit_path, default_path)
     exit 0
+  end
+
+  def cmd_install!(args, tries_path)
+    script_path = File.expand_path($0)
+
+    explicit_path = if args[0] && args[0].start_with?('/')
+      File.expand_path(args.shift)
+    end
+
+    default_path = tries_path || File.expand_path("~/src/tries")
+
+    shell = detect_shell
+    rc_file = shell_rc_file(shell)
+    snippet = init_snippet(shell, script_path, explicit_path, default_path)
+
+    unless rc_file
+      STDERR.puts "Error: could not determine shell config file"
+      STDERR.puts "Your shell was detected as: #{shell || 'unknown'}"
+      STDERR.puts "Run 'try init' and manually add the output to your shell config."
+      exit 1
+    end
+
+    rc_path = File.expand_path(rc_file)
+
+    # Check if already installed
+    if File.exist?(rc_path) && File.read(rc_path).include?("# try shell integration")
+      STDERR.puts "try is already installed in #{rc_path}"
+      STDERR.puts "To reinstall, remove the '# try shell integration' block first."
+      exit 0
+    end
+
+    block = "\n# try shell integration\n#{snippet}"
+
+    if File.exist?(rc_path) && !File.writable?(rc_path)
+      STDERR.puts "Warning: #{rc_path} is read-only, skipping."
+      STDERR.puts "Run 'try init' and manually add the output to your shell config."
+      exit 1
+    end
+
+    FileUtils.mkdir_p(File.dirname(rc_path))
+    File.open(rc_path, 'a') { |f| f.write(block) }
+    STDERR.puts "Added try shell integration to #{rc_path}"
+    STDERR.puts "Restart your shell or run: source #{rc_path}" unless shell == 'pwsh'
+    STDERR.puts "Restart your shell or run: . $PROFILE" if shell == 'pwsh'
+    exit 0
+  end
+
+  def detect_shell
+    # Check SHELL env (Unix), then parent process, then PSModulePath for PowerShell
+    shell_env = ENV["SHELL"].to_s
+    return 'fish' if shell_env.include?('fish')
+    return 'zsh' if shell_env.include?('zsh')
+    return 'bash' if shell_env.include?('bash')
+
+    # PowerShell detection: PSModulePath is set in pwsh sessions
+    return 'pwsh' if ENV["PSModulePath"] && !ENV["PSModulePath"].empty?
+
+    # Fallback: check parent process name
+    parent = (`ps c -p #{Process.ppid} -o 'ucomm='`.strip rescue nil)
+    return 'fish' if parent&.include?('fish')
+    return 'zsh' if parent&.include?('zsh')
+    return 'bash' if parent&.include?('bash')
+    return 'pwsh' if parent&.match?(/pwsh|powershell/i)
+
+    nil
+  end
+
+  def shell_rc_file(shell)
+    case shell
+    when 'fish' then '~/.config/fish/config.fish'
+    when 'zsh'  then '~/.zshrc'
+    when 'bash'
+      # Prefer .bashrc, fall back to .bash_profile on macOS
+      File.exist?(File.expand_path('~/.bashrc')) ? '~/.bashrc' : '~/.bash_profile'
+    when 'pwsh'
+      # PowerShell profile path from $PROFILE, or the standard location
+      ENV["PROFILE"] || (Gem.win_platform? ?
+        File.join(ENV["USERPROFILE"] || Dir.home, "Documents", "PowerShell", "Microsoft.PowerShell_profile.ps1") :
+        File.join(Dir.home, ".config", "powershell", "Microsoft.PowerShell_profile.ps1"))
+    end
+  end
+
+  def init_snippet(shell, script_path, explicit_path, default_path)
+    case shell
+    when 'fish'
+      fish_path_arg = explicit_path ? " --path '#{explicit_path}'" : " --path (if set -q TRY_PATH; echo \"$TRY_PATH\"; else; echo '#{default_path}'; end)"
+      <<~FISH
+        function try
+          set -l out (/usr/bin/env ruby '#{script_path}' exec#{fish_path_arg} $argv 2>/dev/tty | string collect)
+          if test $pipestatus[1] -eq 0
+            eval $out
+          else
+            echo $out
+          end
+        end
+      FISH
+    when 'pwsh'
+      ps_path_expr = if explicit_path
+        "'#{explicit_path}'"
+      else
+        "$(if ($env:TRY_PATH) { $env:TRY_PATH } else { '#{default_path}' })"
+      end
+      <<~PWSH
+        function try {
+          $tryPath = #{ps_path_expr}
+          $tempErr = [System.IO.Path]::GetTempFileName()
+          $out = & ruby '#{script_path}' exec --path $tryPath @args 2>$tempErr
+          if ($LASTEXITCODE -eq 0) {
+            $out | Invoke-Expression
+          } else {
+            Get-Content $tempErr | Write-Host
+            $out | Write-Output
+          }
+          Remove-Item $tempErr -ErrorAction SilentlyContinue
+        }
+      PWSH
+    else # bash, zsh
+      path_arg = explicit_path ? " --path '#{explicit_path}'" : " --path \"${TRY_PATH:-#{default_path}}\""
+      <<~SH
+        try() {
+          local out
+          out=$(/usr/bin/env ruby '#{script_path}' exec#{path_arg} "$@" 2>/dev/tty)
+          if [ $? -eq 0 ]; then
+            eval "$out"
+          else
+            echo "$out"
+          fi
+        }
+      SH
+    end
   end
 
   def cmd_cd!(args, tries_path, and_type, and_exit, and_keys, and_confirm)
@@ -1426,6 +1531,9 @@ if __FILE__ == $0
     exit 0
   when 'init'
     cmd_init!(ARGV, tries_path)
+    exit 0
+  when 'install'
+    cmd_install!(ARGV, tries_path)
     exit 0
   when 'exec'
     sub = ARGV.first
