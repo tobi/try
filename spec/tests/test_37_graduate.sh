@@ -180,6 +180,23 @@ else
     fail "E2E: content should be accessible through symlink" "hello" "$(cat $E2E_DIR/2025-06-01-real-test/file.txt 2>&1)" "graduate"
 fi
 
+# Test: Selecting a symlinked entry cds to the realpath (graduated destination)
+output=$(try_run --path="$E2E_DIR" --and-keys='ENTER' exec 2>/dev/null)
+real_dest=$(cd "$E2E_DEST/graduated-project" && pwd -P)
+if echo "$output" | grep -q "cd '$real_dest'"; then
+    pass
+else
+    fail "Selecting symlinked entry should cd to realpath" "cd '$real_dest'" "$output" "graduate"
+fi
+
+# Test: Symlinked entry shows link icon in TUI
+output=$(try_run --path="$E2E_DIR" --and-exit exec 2>/dev/null)
+if echo "$output" | grep -q "🔗"; then
+    pass
+else
+    fail "Symlinked entry should show link icon" "🔗" "$output" "graduate"
+fi
+
 # Test: Graduate with .git directory (regular repo, not worktree) uses mv
 REG_DIR=$(mktemp -d)
 mkdir -p "$REG_DIR/2025-06-01-regular-repo/.git/objects"

@@ -118,11 +118,14 @@ class TrySelector
         # Bonus for date-prefixed directories
         base_score += 2.0 if entry.match?(/^\d{4}-\d{2}-\d{2}-/)
 
+        is_symlink = File.symlink?(path)
+
         tries << {
           text: entry,
           basename: entry,
-          path: path,
+          path: is_symlink ? File.realpath(path) : path,
           is_new: false,
+          is_symlink: is_symlink,
           ctime: stat.ctime,
           mtime: mtime,
           base_score: base_score
@@ -395,7 +398,14 @@ class TrySelector
 
     line = screen.body.add_line(background: background)
     line.write << (is_selected ? Tui::Text.highlight("→ ") : "  ")
-    line.write << (is_marked ? emoji("🗑️") : emoji("📁")) << " "
+    icon = if is_marked
+      emoji("🗑️")
+    elsif entry[:is_symlink]
+      emoji("🔗")
+    else
+      emoji("📁")
+    end
+    line.write << icon << " "
 
     plain_name, rendered_name = formatted_entry_name(entry)
     prefix_width = 5
