@@ -1541,6 +1541,9 @@ if __FILE__ == $0
     when 'clone'
       ARGV.shift
       emit_script(cmd_clone!(ARGV, tries_path))
+    when 'init'
+      ARGV.shift
+      cmd_init!(ARGV, tries_path)
     when 'worktree'
       ARGV.shift
       repo = ARGV.shift
