@@ -1268,7 +1268,7 @@ if __FILE__ == $0
       fish_path_arg = explicit_path ? " --path '#{explicit_path}'" : " --path (if set -q TRY_PATH; echo \"$TRY_PATH\"; else; echo '#{default_path}'; end)"
       <<~FISH
         function try
-          set -l out (/usr/bin/env ruby '#{script_path}' exec#{fish_path_arg} $argv 2>/dev/tty | string collect)
+          set -l out ('#{script_path}' exec#{fish_path_arg} $argv 2>/dev/tty | string collect)
           if test $pipestatus[1] -eq 0
             eval $out
           else
@@ -1286,7 +1286,7 @@ if __FILE__ == $0
         function try {
           $tryPath = #{ps_path_expr}
           $tempErr = [System.IO.Path]::GetTempFileName()
-          $out = & ruby '#{script_path}' exec --path $tryPath @args 2>$tempErr
+          $out = & '#{script_path}' exec --path $tryPath @args 2>$tempErr
           if ($LASTEXITCODE -eq 0) {
             $out | Invoke-Expression
           } else {
@@ -1301,7 +1301,7 @@ if __FILE__ == $0
       <<~SH
         try() {
           local out
-          out=$(/usr/bin/env ruby '#{script_path}' exec#{path_arg} "$@" 2>/dev/tty)
+          out=$('#{script_path}' exec#{path_arg} "$@" 2>/dev/tty)
           if [ $? -eq 0 ]; then
             eval "$out"
           else
@@ -1541,6 +1541,9 @@ if __FILE__ == $0
     when 'clone'
       ARGV.shift
       emit_script(cmd_clone!(ARGV, tries_path))
+    when 'init'
+      ARGV.shift
+      cmd_init!(ARGV, tries_path)
     when 'worktree'
       ARGV.shift
       repo = ARGV.shift
