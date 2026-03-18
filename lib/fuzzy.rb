@@ -18,7 +18,8 @@
 #   fuzzy.match("proj").limit(10).each { |entry, positions, score| ... }
 #
 class Fuzzy
-  Entry = Data.define(:data, :text, :text_lower, :base_score)
+  # Simple Ruby 3.0-compatible struct used instead of Data.define
+  Entry = Struct.new(:data, :text, :text_lower, :base_score, keyword_init: true)
 
   def initialize(entries)
     @entries = entries.map do |e|

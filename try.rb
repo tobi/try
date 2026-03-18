@@ -132,22 +132,29 @@ class TrySelector
     end
   end
 
-  # Result wrapper to avoid Hash#merge allocation per entry
-  TryEntry = Data.define(:data, :score, :highlight_positions) do
+  # Result wrapper to avoid Hash#merge allocation per entry (Ruby 3.0 compatible)
+  TryEntry = Struct.new(:data, :score, :highlight_positions) do
     def [](key)
       case key
-      when :score then score
-      when :highlight_positions then highlight_positions
-      else data[key]
+      when :score
+        score
+      when :highlight_positions
+        highlight_positions
+      else
+        data[key]
       end
     end
 
-    def method_missing(name, *)
-      data[name]
+    def method_missing(name, *args, &block)
+      if data.respond_to?(:key?) && data.key?(name)
+        data[name]
+      else
+        super
+      end
     end
 
     def respond_to_missing?(name, include_private = false)
-      data.key?(name) || super
+      (data.respond_to?(:key?) && data.key?(name)) || super
     end
   end
 
@@ -957,7 +964,7 @@ if __FILE__ == $0
         eval "$(try init ~/src/tries)"
 
         # fish (~/.config/fish/config.fish)
-        eval (try init ~/src/tries | string collect)
+        SHELL=fish try init ~/src/tries | source
 
       Usage:
         try [query]           Interactive directory selector
@@ -1157,6 +1164,48 @@ if __FILE__ == $0
     end
 
     script_clone(File.join(tries_path, dir_name), git_uri)
+  end
+
+  def cmd_install!(tries_path)
+    script_path = File.expand_path($0)
+    home = Dir.home
+    default_tries = File.expand_path("~/src/tries")
+
+    if fish?
+      config_path = File.join(home, ".config/fish/config.fish")
+      FileUtils.mkdir_p(File.dirname(config_path))
+
+      fish_block = <<~FISH
+
+        # try: ephemeral workspace manager
+        function try
+          set -l out (/usr/bin/env ruby '#{script_path}' exec --path (if set -q TRY_PATH; echo "$TRY_PATH"; else; echo '#{default_tries}'; end) $argv 2>/dev/tty | string collect)
+          if test $pipestatus[1] -eq 0
+            eval $out
+          else
+            echo $out
+          end
+        end
+
+        # initialize try for fish
+        eval (/usr/bin/env ruby '#{script_path}' init '#{default_tries}' | string collect)
+      FISH
+
+      File.open(config_path, "a") { |f| f.write(fish_block) }
+      STDERR.puts "Installed fish integration into #{config_path}"
+    else
+      shell = ENV["SHELL"].to_s
+      line = %Q[\n# try: ephemeral workspace manager\neval "$(ruby '#{script_path}' init #{default_tries})"\n]
+
+      if shell.include?("zsh")
+        rc_path = File.join(home, ".zshrc")
+      else
+        rc_path = File.join(home, ".bashrc")
+      end
+
+      File.open(rc_path, "a") { |f| f.write(line) }
+      STDERR.puts "Installed #{shell.include?("zsh") ? "zsh" : "bash"} integration into #{rc_path}"
+    end
   end
 
   def cmd_init!(args, tries_path)
@@ -1388,10 +1437,14 @@ if __FILE__ == $0
   # shell detection for init wrapper
   # Check $SHELL first (user's configured shell), then parent process as fallback
   def fish?
-    shell = ENV["SHELL"]
-    shell = `ps c -p #{Process.ppid} -o 'ucomm='`.strip rescue nil if shell.to_s.empty?
+    env_shell = ENV["SHELL"].to_s
+    parent_comm = begin
+      `ps c -p #{Process.ppid} -o 'ucomm='`.strip
+    rescue
+      nil
+    end
 
-    shell&.include?('fish')
+    [env_shell, parent_comm].any? { |s| s && s.include?("fish") }
   end
 
 
@@ -1413,6 +1466,9 @@ if __FILE__ == $0
     exit 2
   when 'clone'
     emit_script(cmd_clone!(ARGV, tries_path))
+    exit 0
+  when 'install'
+    cmd_install!(tries_path)
     exit 0
   when 'init'
     cmd_init!(ARGV, tries_path)

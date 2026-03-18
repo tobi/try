@@ -53,6 +53,9 @@ echo 'eval "$(ruby ~/.local/try.rb init ~/src/tries)"' >> ~/.zshrc
 
 # for fish shell users
 echo '~/.local/try.rb init ~/src/tries | source' >> ~/.config/fish/config.fish
+
+ruby ~/.local/try.rb install
+
 ```
 
 ## The Problem
