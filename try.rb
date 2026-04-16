@@ -7,6 +7,14 @@ require 'set'
 require_relative 'lib/tui'
 require_relative 'lib/fuzzy'
 
+def name_first?
+  !ENV['TRY_NAME_FIRST'].to_s.empty?
+end
+
+def format_try_name(date_prefix, name)
+  name_first? ? "#{name}-#{date_prefix}" : "#{date_prefix}-#{name}"
+end
+
 class TrySelector
   include Tui::Helpers
   TRY_PATH = ENV['TRY_PATH'] || File.expand_path("~/src/tries")
@@ -115,8 +123,8 @@ class TrySelector
         hours_since_access = (now - mtime) / 3600.0
         base_score = 3.0 / Math.sqrt(hours_since_access + 1)
 
-        # Bonus for date-prefixed directories
-        base_score += 2.0 if entry.match?(/^\d{4}-\d{2}-\d{2}-/)
+        # Bonus for date-prefixed or date-suffixed directories
+        base_score += 2.0 if entry.match?(/^\d{4}-\d{2}-\d{2}-/) || entry.match?(/-\d{4}-\d{2}-\d{2}$/)
 
         is_symlink = File.symlink?(path)
 
@@ -431,9 +439,9 @@ class TrySelector
     line.write << (is_selected ? Tui::Text.highlight("→ ") : "  ")
     date_prefix = Time.now.strftime("%Y-%m-%d")
     label = if @input_buffer.empty?
-      "📂 Create new: #{date_prefix}-"
+      name_first? ? "📂 Create new: -#{date_prefix}" : "📂 Create new: #{date_prefix}-"
     else
-      "📂 Create new: #{date_prefix}-#{@input_buffer}"
+      name_first? ? "📂 Create new: #{@input_buffer}-#{date_prefix}" : "📂 Create new: #{date_prefix}-#{@input_buffer}"
     end
     line.write << label
   end
@@ -448,10 +456,15 @@ class TrySelector
       date_len = date_part.length + 1  # +1 for the hyphen
 
       rendered = Tui::Text.dim(date_part)
-      # Highlight hyphen if it's in positions
       rendered += positions.include?(10) ? Tui::Text.highlight('-') : Tui::Text.dim('-')
       rendered += highlight_with_positions(name_part, positions, date_len)
       ["#{date_part}-#{name_part}", rendered]
+    elsif basename =~ /^(.+)-(\d{4}-\d{2}-\d{2})$/
+      name_part = $1
+      date_part = $2
+      rendered = highlight_with_positions(name_part, positions, 0)
+      rendered += Tui::Text.dim("-#{date_part}")
+      ["#{name_part}-#{date_part}", rendered]
     else
       [basename, highlight_with_positions(basename, positions, 0)]
     end
@@ -788,7 +801,7 @@ class TrySelector
 
     # If user already typed a name, use it directly
     if !@input_buffer.empty?
-      final_name = "#{date_prefix}-#{@input_buffer}".gsub(/\s+/, '-')
+      final_name = format_try_name(date_prefix, @input_buffer).gsub(/\s+/, '-')
       full_path = File.join(@base_path, final_name)
       @selected = { type: :mkdir, path: full_path }
     else
@@ -799,7 +812,7 @@ class TrySelector
         show_cursor
         STDERR.puts "Enter new try name"
         STDERR.puts
-        STDERR.print("> #{date_prefix}-")
+        STDERR.print(name_first? ? "> " : "> #{date_prefix}-")
         STDERR.flush
 
         STDERR.cooked do
@@ -812,7 +825,7 @@ class TrySelector
 
       return if entry.nil? || entry.empty?
 
-      final_name = "#{date_prefix}-#{entry}".gsub(/\s+/, '-')
+      final_name = format_try_name(date_prefix, entry).gsub(/\s+/, '-')
       full_path = File.join(@base_path, final_name)
 
       @selected = { type: :mkdir, path: full_path }
@@ -1069,7 +1082,7 @@ if __FILE__ == $0
     return nil unless parsed
 
     date_prefix = Time.now.strftime("%Y-%m-%d")
-    "#{date_prefix}-#{parsed[:user]}-#{parsed[:repo]}"
+    format_try_name(date_prefix, "#{parsed[:user]}-#{parsed[:repo]}")
   end
 
   def is_git_uri?(arg)
@@ -1335,7 +1348,7 @@ if __FILE__ == $0
       end
       date_prefix = Time.now.strftime("%Y-%m-%d")
       base = resolve_unique_name_with_versioning(tries_path, date_prefix, base)
-      full_path = File.join(tries_path, "#{date_prefix}-#{base}")
+      full_path = File.join(tries_path, format_try_name(date_prefix, base))
       # Use worktree if .git exists (file in worktrees, directory in regular repos)
       if File.exist?(File.join(repo_dir, '.git'))
         return script_worktree(full_path, repo_dir)
@@ -1481,7 +1494,7 @@ if __FILE__ == $0
   # bump the trailing number to the next available one for today.
   # Otherwise, fall back to unique_dir_name with -2, -3 suffixes.
   def resolve_unique_name_with_versioning(tries_path, date_prefix, base)
-    initial = "#{date_prefix}-#{base}"
+    initial = format_try_name(date_prefix, base)
     return base unless Dir.exist?(File.join(tries_path, initial))
 
     m = base.match(/^(.*?)(\d+)$/)
@@ -1490,13 +1503,17 @@ if __FILE__ == $0
       candidate_num = n + 1
       loop do
         candidate_base = "#{stem}#{candidate_num}"
-        candidate_full = File.join(tries_path, "#{date_prefix}-#{candidate_base}")
+        candidate_full = File.join(tries_path, format_try_name(date_prefix, candidate_base))
         return candidate_base unless Dir.exist?(candidate_full)
         candidate_num += 1
       end
     else
-      # No numeric suffix; use -2 style uniqueness on full name
-      return unique_dir_name(tries_path, "#{date_prefix}-#{base}").sub(/^#{Regexp.escape(date_prefix)}-/, '')
+      full = unique_dir_name(tries_path, format_try_name(date_prefix, base))
+      if name_first?
+        return full.sub(/-#{Regexp.escape(date_prefix)}$/, '')
+      else
+        return full.sub(/^#{Regexp.escape(date_prefix)}-/, '')
+      end
     end
   end
 
@@ -1519,7 +1536,7 @@ if __FILE__ == $0
     end
     date_prefix = Time.now.strftime("%Y-%m-%d")
     base = resolve_unique_name_with_versioning(tries_path, date_prefix, base)
-    File.join(tries_path, "#{date_prefix}-#{base}")
+    File.join(tries_path, format_try_name(date_prefix, base))
   end
 
   case command
