@@ -1057,6 +1057,11 @@ if __FILE__ == $0
       # git@host:user/repo
       host, user, repo = $1, $2, $3
       return { user: user, repo: repo, host: host }
+    elsif uri.match(%r{^([^@/:]+)@([^:]+):(.+)})
+      # SCP-style SSH: user@host:path/to/repo
+      user, host, path = $1, $2, $3
+      repo = File.basename(path)
+      return { user: user, repo: repo, host: host }
     else
       return nil
     end

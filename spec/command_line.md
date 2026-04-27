@@ -77,6 +77,9 @@ try https://github.com/tobi/try.git
 
 try clone git@github.com:tobi/try.git
 # SSH URL also works: 2025-11-30-tobi-try
+
+try clone deploy@git.example.com:src/team/project.git
+# SCP-style SSH URLs with nested paths also work: 2025-11-30-deploy-project
 ```
 
 ### worktree
