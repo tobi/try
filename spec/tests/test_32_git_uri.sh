@@ -36,6 +36,14 @@ else
     fail "SSH gitlab.com should parse user/repo" "user-sshrepo" "$output" "git_uri"
 fi
 
+# Test: SCP-style SSH host with custom user and nested path
+output=$(try_run --path="$TEST_TRIES" exec clone deploy@git.example.com:src/team/project.git 2>&1)
+if echo "$output" | grep -q "deploy-project"; then
+    pass
+else
+    fail "SCP-style SSH URL should parse nested repo path" "deploy-project" "$output" "git_uri"
+fi
+
 # Test: Unparseable URI produces error
 output=$(try_run --path="$TEST_TRIES" exec clone not-a-valid-uri 2>&1)
 exit_code=$?
