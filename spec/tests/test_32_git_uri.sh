@@ -44,6 +44,22 @@ else
     fail "SSH git_host:port should parse user/customsshrepo" "user-customsshrepo" "$output" "git_uri"
 fi
 
+# Test: SCP-style SSH host with custom user and nested path
+output=$(try_run --path="$TEST_TRIES" exec clone deploy@git.example.com:src/team/project.git 2>&1)
+if echo "$output" | grep -q "deploy-project"; then
+    pass
+else
+    fail "SCP-style SSH URL should parse nested repo path" "deploy-project" "$output" "git_uri"
+fi
+
+# Test: git@ SSH host with a nested path
+output=$(try_run --path="$TEST_TRIES" exec clone git@git.example.com:src/team/project.git 2>&1)
+if echo "$output" | grep -q "src-project"; then
+    pass
+else
+    fail "git@ SSH URL should parse nested repo path" "src-project" "$output" "git_uri"
+fi
+
 # Test: Unparseable URI produces error
 output=$(try_run --path="$TEST_TRIES" exec clone not-a-valid-uri 2>&1)
 exit_code=$?

@@ -1053,13 +1053,20 @@ if __FILE__ == $0
       # https://gitlab.com/user/repo or other git hosts
       host, user, repo = $1, $2, $3
       return { user: user, repo: repo, host: host }
-    elsif uri.match(%r{^git@([^:]+):([^/]+)/([^/]+)})
-      # git@host:user/repo
-      host, user, repo = $1, $2, $3
+    elsif uri.match(%r{^git@([^:]+):([^/]+)/(.+)})
+      # git@host:user/path/to/repo
+      host, user, path = $1, $2, $3
+      repo = File.basename(path)
       return { user: user, repo: repo, host: host }
-    elsif uri.match(%r{^ssh://git@([^/]+)/([^/]+)/([^/]+)})
-      # ssh://git@host:port/user/repo
-      host, user, repo = $1, $2, $3
+    elsif uri.match(%r{^ssh://[^@/]+@([^/]+)/([^/]+)/(.+)})
+      # ssh://user@host:port/user/repo
+      host, user, path = $1, $2, $3
+      repo = File.basename(path)
+      return { user: user, repo: repo, host: host }
+    elsif uri.match(%r{^([^@/:]+)@([^:]+):(.+)})
+      # SCP-style SSH: user@host:path/to/repo
+      user, host, path = $1, $2, $3
+      repo = File.basename(path)
       return { user: user, repo: repo, host: host }
     else
       return nil
