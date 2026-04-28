@@ -78,6 +78,9 @@ try https://github.com/tobi/try.git
 
 try clone git@github.com:tobi/try.git
 # SSH URL also works: 2025-11-30-tobi-try
+
+try clone ssh://git@yourgitserver:port/user/repo.git
+# SSH URL with custom port also works: 2025-11-30-user-repo
 ```
 
 ### worktree
