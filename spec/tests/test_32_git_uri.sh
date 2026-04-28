@@ -36,6 +36,14 @@ else
     fail "SSH gitlab.com should parse user/repo" "user-sshrepo" "$output" "git_uri"
 fi
 
+# Test: Other SSH host with custom port
+output=$(try_run --path="$TEST_TRIES" exec clone ssh://git@git_host:port/user/customsshrepo.git 2>&1)
+if echo "$output" | grep -q "user-customsshrepo"; then
+    pass
+else
+    fail "SSH git_host:port should parse user/customsshrepo" "user-customsshrepo" "$output" "git_uri"
+fi
+
 # Test: Unparseable URI produces error
 output=$(try_run --path="$TEST_TRIES" exec clone not-a-valid-uri 2>&1)
 exit_code=$?

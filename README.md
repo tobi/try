@@ -10,7 +10,7 @@ Ever find yourself with 50 directories named `test`, `test2`, `new-test`, `actua
 
 **try** is here for your beautifully chaotic mind.
 
-# What it does 
+# What it does
 
 ![Fuzzy Search Demo](assets/try-fuzzy-search-demo.gif)
 
@@ -162,6 +162,7 @@ Supported git URI formats:
 - `git@github.com:user/repo.git` (SSH GitHub)
 - `https://gitlab.com/user/repo.git` (GitLab)
 - `git@host.com:user/repo.git` (SSH other hosts)
+- `ssh://git@host.com:port/user/repo.git` (SSH other hosts with custom port)
 
 The `.git` suffix is automatically removed from URLs when generating directory names.
 
@@ -199,9 +200,9 @@ nix run github:tobi/try init ~/my-tries
 ```nix
 {
   inputs.try.url = "github:tobi/try";
-  
+
   imports = [ inputs.try.homeManagerModules.default ];
-  
+
   programs.try = {
     enable = true;
     path = "~/experiments";  # optional, defaults to ~/src/tries

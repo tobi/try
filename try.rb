@@ -1057,6 +1057,10 @@ if __FILE__ == $0
       # git@host:user/repo
       host, user, repo = $1, $2, $3
       return { user: user, repo: repo, host: host }
+    elsif uri.match(%r{^ssh://git@([^/]+)/([^/]+)/([^/]+)})
+      # ssh://git@host:port/user/repo
+      host, user, repo = $1, $2, $3
+      return { user: user, repo: repo, host: host }
     else
       return nil
     end
