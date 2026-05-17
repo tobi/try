@@ -69,16 +69,13 @@
           version = builtins.replaceStrings ["\n"] [""] (builtins.readFile ./VERSION);
 
           src = inputs.self;
-          nativeBuildInputs = [ pkgs.makeBinaryWrapper ];
-
           installPhase = ''
             mkdir -p $out/bin
             cp try.rb $out/bin/try
             cp -r lib $out/bin/
+            substituteInPlace $out/bin/try \
+              --replace-fail '#!/usr/bin/env ruby' '#!${ruby}/bin/ruby'
             chmod +x $out/bin/try
-
-            wrapProgram $out/bin/try \
-              --prefix PATH : ${ruby}/bin
           '';
 
           meta = with pkgs.lib; {

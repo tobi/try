@@ -26,10 +26,18 @@ else
     fail "init with fish should emit fish function" "function try" "$output" "init_spec.md"
 fi
 
-# Test: init output contains the real, full path to try binary
+# Test: init output contains a real, full path to the try binary
 output=$(SHELL=/bin/bash try_run init "$TEST_TRIES" 2>&1)
-if echo "$output" | grep -qF "$TRY_BIN_PATH"; then
+TRY_BIN_REAL_PATH=$(realpath "$TRY_BIN_PATH" 2>/dev/null || readlink -f "$TRY_BIN_PATH" 2>/dev/null || echo "$TRY_BIN_PATH")
+if echo "$output" | grep -qF "$TRY_BIN_PATH" || echo "$output" | grep -qF "$TRY_BIN_REAL_PATH"; then
     pass
 else
-    fail "init should contain real, full path to try binary" "$TRY_BIN_PATH" "$output" "init_spec.md"
+    fail "init should contain real, full path to try binary" "$TRY_BIN_PATH or $TRY_BIN_REAL_PATH" "$output" "init_spec.md"
+fi
+
+# Test: init output calls the binary wrapper directly, not the wrapped Ruby script
+if echo "$output" | grep -qE "/usr/bin/env ruby|/ruby |\.try-wrapped"; then
+    fail "init should not bypass package wrappers" "no /usr/bin/env ruby and no .try-wrapped" "$output" "init_spec.md"
+else
+    pass
 fi
