@@ -1263,12 +1263,14 @@ if __FILE__ == $0
   end
 
   def init_snippet(shell, script_path, explicit_path, default_path)
+    require 'rbconfig'
+    ruby_bin = RbConfig.ruby
     case shell
     when 'fish'
       fish_path_arg = explicit_path ? " --path '#{explicit_path}'" : " --path (if set -q TRY_PATH; echo \"$TRY_PATH\"; else; echo '#{default_path}'; end)"
       <<~FISH
         function try
-          set -l out (/usr/bin/env ruby '#{script_path}' exec#{fish_path_arg} $argv 2>/dev/tty | string collect)
+          set -l out ('#{ruby_bin}' '#{script_path}' exec#{fish_path_arg} $argv 2>/dev/tty | string collect)
           if test $pipestatus[1] -eq 0
             eval $out
           else
@@ -1286,7 +1288,7 @@ if __FILE__ == $0
         function try {
           $tryPath = #{ps_path_expr}
           $tempErr = [System.IO.Path]::GetTempFileName()
-          $out = & ruby '#{script_path}' exec --path $tryPath @args 2>$tempErr
+          $out = & '#{ruby_bin}' '#{script_path}' exec --path $tryPath @args 2>$tempErr
           if ($LASTEXITCODE -eq 0) {
             $out | Invoke-Expression
           } else {
@@ -1301,7 +1303,7 @@ if __FILE__ == $0
       <<~SH
         try() {
           local out
-          out=$(/usr/bin/env ruby '#{script_path}' exec#{path_arg} "$@" 2>/dev/tty)
+          out=$('#{ruby_bin}' '#{script_path}' exec#{path_arg} "$@" 2>/dev/tty)
           if [ $? -eq 0 ]; then
             eval "$out"
           else
