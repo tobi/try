@@ -972,18 +972,23 @@ if __FILE__ == $0
       Usage:
         try [query]           Interactive directory selector
         try clone <url>       Clone repo into dated directory
+        try pr <arg>          Checkout PR into dated directory
         try worktree <name>   Create worktree from current git repo
         try --help            Show this help
 
       Commands:
         init [path]           Output shell function definition
         clone <url> [name]    Clone git repo into date-prefixed directory
+        pr <arg> [name]       Checkout a PR into a dated directory
         worktree <name>       Create worktree in dated directory
 
       Examples:
         try                   Open interactive selector
         try project           Selector with initial filter
         try clone https://github.com/user/repo
+        try pr 123
+        try pr user/repo#456
+        try pr https://github.com/user/repo/pull/789
         try worktree feature-branch
 
       Manual mode (without alias):
@@ -1077,6 +1082,15 @@ if __FILE__ == $0
     arg.match?(%r{^(https?://|git@)}) || arg.include?('github.com') || arg.include?('gitlab.com') || arg.end_with?('.git')
   end
 
+  def is_github_pr_uri?(arg)
+    return false unless arg
+    arg.match?(%r{^https?://github\.com/[^/]+/[^/]+/pull/\d+})
+  end
+
+  def is_inside_git_repo?
+    system("git rev-parse --is-inside-work-tree >/dev/null 2>&1")
+  end
+
   # Extract all options BEFORE getting command (they can appear anywhere)
   tries_path = extract_option_with_value!(ARGV, '--path') || TrySelector::TRY_PATH
   tries_path = File.expand_path(tries_path)
@@ -1167,6 +1181,78 @@ if __FILE__ == $0
     end
 
     script_clone(File.join(tries_path, dir_name), git_uri)
+  end
+
+  def cmd_pr!(args, tries_path)
+    pr_arg = args.shift
+    custom_name = args.shift
+
+    unless pr_arg
+      warn "Error: PR argument required"
+      warn "Usage: try pr <pr-number|user/repo#pr-number|github-pr-url> [name]"
+      exit 1
+    end
+
+    # Handle different PR argument formats
+    if pr_arg =~ %r{^https?://github\.com/([^/]+)/([^/]+)/pull/(\d+)}
+      user, repo, pr_id = $1, $2, $3
+      git_uri = "https://github.com/#{user}/#{repo}.git"
+      dir_name = if custom_name && !custom_name.empty?
+        custom_name
+      else
+        "#{user}-#{repo}-pr-#{pr_id}"
+      end
+      date_prefix = Time.now.strftime("%Y-%m-%d")
+      dir_name = resolve_unique_name_with_versioning(tries_path, date_prefix, dir_name)
+      full_path = File.join(tries_path, "#{date_prefix}-#{dir_name}")
+
+      script_clone_pr(full_path, git_uri, pr_id)
+
+    elsif pr_arg =~ %r{^([^/]+)/([^#]+)#(\d+)$}
+      user, repo, pr_id = $1, $2, $3
+      git_uri = "https://github.com/#{user}/#{repo}.git"
+      dir_name = if custom_name && !custom_name.empty?
+        custom_name
+      else
+        "#{user}-#{repo}-pr-#{pr_id}"
+      end
+      date_prefix = Time.now.strftime("%Y-%m-%d")
+      dir_name = resolve_unique_name_with_versioning(tries_path, date_prefix, dir_name)
+      full_path = File.join(tries_path, "#{date_prefix}-#{dir_name}")
+
+      script_clone_pr(full_path, git_uri, pr_id)
+
+    elsif pr_arg =~ /^\d+$/
+      pr_id = pr_arg
+      unless is_inside_git_repo?
+        warn "Error: Not inside a git repository. Cannot run 'try pr <id>' without repository context."
+        exit 1
+      end
+
+      repo_dir = Dir.pwd
+      repo_name = File.basename(repo_dir)
+      remote_url = `git config --get remote.origin.url 2>/dev/null`.strip rescue nil
+      if remote_url && !remote_url.empty?
+        parsed = parse_git_uri(remote_url)
+        repo_name = parsed[:repo] if parsed && parsed[:repo]
+      end
+
+      dir_name = if custom_name && !custom_name.empty?
+        custom_name
+      else
+        "#{repo_name}-pr-#{pr_id}"
+      end
+      date_prefix = Time.now.strftime("%Y-%m-%d")
+      dir_name = resolve_unique_name_with_versioning(tries_path, date_prefix, dir_name)
+      full_path = File.join(tries_path, "#{date_prefix}-#{dir_name}")
+
+      script_worktree_pr(full_path, repo_dir, pr_id)
+
+    else
+      warn "Error: Invalid PR argument format: #{pr_arg}"
+      warn "Usage: try pr <pr-number|user/repo#pr-number|github-pr-url> [name]"
+      exit 1
+    end
   end
 
   def cmd_init!(args, tries_path)
@@ -1317,6 +1403,10 @@ if __FILE__ == $0
       return cmd_clone!(args[1..-1] || [], tries_path)
     end
 
+    if args.first == "pr"
+      return cmd_pr!(args[1..-1] || [], tries_path)
+    end
+
     # Support: try . [name] and try ./path [name]
     if args.first && args.first.start_with?('.')
       path_arg = args.shift
@@ -1345,6 +1435,24 @@ if __FILE__ == $0
     end
 
     search_term = args.join(' ')
+
+    # GitHub PR URL shorthand → pr workflow
+    if is_github_pr_uri?(search_term.split.first)
+      pr_url, custom_name = search_term.split(/\s+/, 2)
+      if pr_url =~ %r{^https?://github\.com/([^/]+)/([^/]+)/pull/(\d+)}
+        user, repo, pr_id = $1, $2, $3
+        git_uri = "https://github.com/#{user}/#{repo}.git"
+        dir_name = if custom_name && !custom_name.empty?
+          custom_name
+        else
+          "#{user}-#{repo}-pr-#{pr_id}"
+        end
+        date_prefix = Time.now.strftime("%Y-%m-%d")
+        dir_name = resolve_unique_name_with_versioning(tries_path, date_prefix, dir_name)
+        full_path = File.join(tries_path, "#{date_prefix}-#{dir_name}")
+        return script_clone_pr(full_path, git_uri, pr_id)
+      end
+    end
 
     # Git URL shorthand → clone workflow
     if is_git_uri?(search_term.split.first)
@@ -1429,6 +1537,29 @@ if __FILE__ == $0
     end
     src = repo || Dir.pwd
     ["mkdir -p #{q(path)}", "echo #{q("Using git worktree to create this trial from #{src}.")}", worktree_cmd] + script_cd(path)
+  end
+
+  def script_clone_pr(path, uri, pr_id)
+    [
+      "mkdir -p #{q(path)}",
+      "echo #{q("Using git clone to create this trial from #{uri} PR ##{pr_id}.")}",
+      "git clone '#{uri}' #{q(path)}",
+      "cd #{q(path)}",
+      "git fetch origin pull/#{pr_id}/head",
+      "git checkout -q FETCH_HEAD",
+      "echo #{q(path)}"
+    ]
+  end
+
+  def script_worktree_pr(path, repo_dir, pr_id)
+    r = repo_dir ? q(repo_dir) : nil
+    git_cmd = r ? "git -C #{r}" : "git"
+    [
+      "#{git_cmd} fetch origin pull/#{pr_id}/head",
+      "#{git_cmd} worktree add --detach #{q(path)} FETCH_HEAD",
+      "echo #{q(path)}",
+      "cd #{q(path)}"
+    ]
   end
 
   def script_delete(paths, base_path)
@@ -1529,6 +1660,9 @@ if __FILE__ == $0
   when 'clone'
     emit_script(cmd_clone!(ARGV, tries_path))
     exit 0
+  when 'pr'
+    emit_script(cmd_pr!(ARGV, tries_path))
+    exit 0
   when 'init'
     cmd_init!(ARGV, tries_path)
     exit 0
@@ -1541,6 +1675,10 @@ if __FILE__ == $0
     when 'clone'
       ARGV.shift
       emit_script(cmd_clone!(ARGV, tries_path))
+    when 'pr'
+      ARGV.shift
+      emit_script(cmd_pr!(ARGV, tries_path))
+      exit 0
     when 'worktree'
       ARGV.shift
       repo = ARGV.shift
