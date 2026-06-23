@@ -1540,13 +1540,14 @@ if __FILE__ == $0
   end
 
   def script_clone_pr(path, uri, pr_id)
+    branch_name = "pr-#{pr_id}"
     [
       "mkdir -p #{q(path)}",
       "echo #{q("Using git clone to create this trial from #{uri} PR ##{pr_id}.")}",
       "git clone '#{uri}' #{q(path)}",
       "cd #{q(path)}",
       "git fetch origin pull/#{pr_id}/head",
-      "git checkout -q FETCH_HEAD",
+      "git checkout -q -B #{q(branch_name)} FETCH_HEAD",
       "echo #{q(path)}"
     ]
   end
@@ -1554,9 +1555,10 @@ if __FILE__ == $0
   def script_worktree_pr(path, repo_dir, pr_id)
     r = repo_dir ? q(repo_dir) : nil
     git_cmd = r ? "git -C #{r}" : "git"
+    branch_name = File.basename(path)
     [
       "#{git_cmd} fetch origin pull/#{pr_id}/head",
-      "#{git_cmd} worktree add --detach #{q(path)} FETCH_HEAD",
+      "#{git_cmd} worktree add -b #{q(branch_name)} #{q(path)} FETCH_HEAD",
       "echo #{q(path)}",
       "cd #{q(path)}"
     ]
