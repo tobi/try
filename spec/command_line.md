@@ -98,6 +98,44 @@ try . <name>              # Shorthand (requires name)
 - Returns shell script to cd into worktree
 - `try .` without a name is NOT supported (too easy to invoke accidentally)
 
+### repo
+
+Publish a plain try directory to a fresh GitHub repository using the GitHub CLI.
+
+```
+try repo [path-or-name] [repo-name] [--private|--public]
+try exec repo [path-or-name] [repo-name] [--private|--public]
+```
+
+**Arguments:**
+- `path-or-name` (optional): Source directory to publish. Existing paths are used directly; otherwise the value is resolved as a child of the tries directory. Defaults to the current directory.
+- `repo-name` (optional): GitHub repository name. Defaults to the source basename with a leading `YYYY-MM-DD-` prefix removed.
+
+**Flags:**
+- `--private`: Create a private repository (default)
+- `--public`: Create a public repository
+
+**Behavior:**
+- Refuses sources that already contain `.git`
+- Changes into the source directory
+- Runs `git init`, `git add .`, and `git commit -m 'Initial commit'`
+- Runs `gh repo create <repo-name> --private --source=. --remote=origin --push` by default
+- Uses `--public` instead of `--private` when requested
+- Removes local `.git` only after the GitHub repo creation and push succeed
+- Returns shell script to cd back into the source directory
+
+**Examples:**
+```
+try repo 2025-11-30-my-app
+# Creates a private GitHub repo named my-app
+
+try repo 2025-11-30-my-app better-name
+# Creates a private GitHub repo named better-name
+
+try repo 2025-11-30-my-app --public
+# Creates a public GitHub repo named my-app
+```
+
 ### init
 
 Output shell function definition for shell integration.

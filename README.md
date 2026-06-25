@@ -10,7 +10,7 @@ Ever find yourself with 50 directories named `test`, `test2`, `new-test`, `actua
 
 **try** is here for your beautifully chaotic mind.
 
-# What it does 
+# What it does
 
 ![Fuzzy Search Demo](assets/try-fuzzy-search-demo.gif)
 
@@ -131,6 +131,7 @@ try ./path/to/repo [name]                      # Use another repo as the worktre
 try worktree dir [name]                        # Same as above, explicit CLI form
 try clone https://github.com/user/repo.git  # Clone repo into date-prefixed directory
 try https://github.com/user/repo.git        # Shorthand for clone (same as above)
+try repo 2025-08-17-my-app                  # Publish a try directory to a new private GitHub repo
 try --help                                   # See all options
 ```
 
@@ -165,12 +166,34 @@ Supported git URI formats:
 
 The `.git` suffix is automatically removed from URLs when generating directory names.
 
+### GitHub Repository Publishing
+
+Publish a plain try directory to a fresh GitHub repository with the GitHub CLI:
+
+```bash
+# Publish a try as a private repo named my-app
+try repo 2025-08-17-my-app
+
+# Choose a custom repo name
+try repo 2025-08-17-my-app better-name
+
+# Create a public repo instead of the private default
+try repo 2025-08-17-my-app --public
+```
+
+The command temporarily runs `git init`, commits the current files, runs `gh repo create --source=. --remote=origin --push`, then removes the local `.git` directory after a successful push. If `gh` or `git` fails, `.git` remains so you can inspect and retry.
+
+In the TUI, select a try and press `Ctrl-U` to edit the repo name and choose private or public visibility before publishing.
+
+For safety, `try repo` only publishes plain directories. It refuses directories that already contain `.git`.
+
 ### Keyboard Shortcuts
 
 - `↑/↓` or `Ctrl-P/N/J/K` - Navigate
 - `Enter` - Select or create
 - `Backspace` - Delete character
 - `Ctrl-D` - Delete directory (with confirmation)
+- `Ctrl-U` - Create GitHub repo from selected try
 - `ESC` - Cancel
 - Just type to filter
 
@@ -199,9 +222,9 @@ nix run github:tobi/try init ~/my-tries
 ```nix
 {
   inputs.try.url = "github:tobi/try";
-  
+
   imports = [ inputs.try.homeManagerModules.default ];
-  
+
   programs.try = {
     enable = true;
     path = "~/experiments";  # optional, defaults to ~/src/tries

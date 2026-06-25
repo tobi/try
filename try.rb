@@ -257,6 +257,11 @@ class TrySelector
           run_ascend_dialog(tries[@cursor_pos])
           break if @selected
         end
+      when "\x15"  # Ctrl-U - publish selected entry to GitHub
+        if @cursor_pos < tries.length
+          run_repo_dialog(tries[@cursor_pos])
+          break if @selected
+        end
       when "\x03", "\e"  # Ctrl-C or ESC
         if @delete_mode
           # Exit delete mode, clear marks
@@ -353,7 +358,7 @@ class TrySelector
       end
     else
       screen.footer.add_line do |line|
-        line.center.write_dim("↑/↓: Navigate  Enter: Select  ^R: Rename  ^G: Graduate  ^D: Delete  Esc: Cancel")
+        line.center.write_dim("↑/↓: Navigate  Enter: Select  ^R: Rename  ^G: Graduate  ^U: Repo  ^D: Delete  Esc: Cancel")
       end
     end
 
@@ -777,6 +782,133 @@ class TrySelector
     true
   end
 
+  # Repo dialog - publish a try to a fresh GitHub repository
+  def run_repo_dialog(entry)
+    @delete_mode = false
+    @marked_for_deletion.clear
+
+    current_name = entry[:basename]
+    repo_buffer = repo_name_from_basename(current_name)
+    repo_cursor = repo_buffer.length
+    visibility = "private"
+    repo_error = nil
+
+    loop do
+      render_repo_dialog(current_name, repo_buffer, repo_cursor, visibility, repo_error)
+
+      ch = read_key
+      case ch
+      when "\r"  # Enter - confirm
+        result = finalize_repo(entry, repo_buffer, visibility)
+        if result == true
+          break
+        else
+          repo_error = result
+        end
+      when "\e", "\x03"  # ESC or Ctrl-C - cancel
+        break
+      when "\e[A", "\e[B", "\x10", "\x0E"  # arrows or Ctrl-P/N toggle visibility
+        visibility = visibility == "private" ? "public" : "private"
+        repo_error = nil
+      when "\x7F", "\b"  # Backspace
+        if repo_cursor > 0
+          repo_buffer = repo_buffer[0...(repo_cursor - 1)] + repo_buffer[repo_cursor..].to_s
+          repo_cursor -= 1
+        end
+        repo_error = nil
+      when "\x01"  # Ctrl-A - start of line
+        repo_cursor = 0
+      when "\x05"  # Ctrl-E - end of line
+        repo_cursor = repo_buffer.length
+      when "\x02"  # Ctrl-B - back one char
+        repo_cursor = [repo_cursor - 1, 0].max
+      when "\x06"  # Ctrl-F - forward one char
+        repo_cursor = [repo_cursor + 1, repo_buffer.length].min
+      when "\x0B"  # Ctrl-K - kill to end
+        repo_buffer = repo_buffer[0...repo_cursor]
+        repo_error = nil
+      when "\x17"  # Ctrl-W - delete word backward
+        if repo_cursor > 0
+          new_pos = word_boundary_backward(repo_buffer, repo_cursor)
+          repo_buffer = repo_buffer[0...new_pos] + repo_buffer[repo_cursor..].to_s
+          repo_cursor = new_pos
+        end
+        repo_error = nil
+      when String
+        if ch.length == 1 && ch =~ /[a-zA-Z0-9\-_\.]/
+          repo_buffer = repo_buffer[0...repo_cursor] + ch + repo_buffer[repo_cursor..].to_s
+          repo_cursor += 1
+          repo_error = nil
+        end
+      end
+    end
+
+    @needs_redraw = true
+  end
+
+  def render_repo_dialog(current_name, repo_buffer, repo_cursor, visibility, repo_error)
+    screen = Tui::Screen.new(io: STDERR)
+
+    screen.header.add_line do |line|
+      line.center << emoji("🐙") << Tui::Text.accent("  Create GitHub repo")
+    end
+    screen.header.add_line { |line| line.write.write_dim(fill("─")) }
+
+    screen.body.add_line do |line|
+      line.write << emoji("📁") << " #{current_name}"
+    end
+    screen.body.add_line
+
+    screen.body.add_line do |line|
+      prefix = "Repo name: "
+      line.center.write_dim(prefix)
+      line.center << screen.input("", value: repo_buffer, cursor: repo_cursor).to_s
+      input_width = [repo_buffer.length, repo_cursor + 1].max
+      prefix_width = Tui::Metrics.visible_width(prefix)
+      max_content = screen.width - 1
+      center_start = (max_content - prefix_width - input_width) / 2
+      line.mark_has_input(center_start + prefix_width)
+    end
+
+    screen.body.add_line
+    screen.body.add_line do |line|
+      private_label = visibility == "private" ? "[private]" : " private "
+      public_label = visibility == "public" ? "[public]" : " public "
+      line.center.write_dim("Visibility: ")
+      line.center << Tui::Text.highlight(private_label) if visibility == "private"
+      line.center.write_dim(private_label) if visibility != "private"
+      line.center << "  "
+      line.center << Tui::Text.highlight(public_label) if visibility == "public"
+      line.center.write_dim(public_label) if visibility != "public"
+    end
+
+    if repo_error
+      screen.body.add_line
+      screen.body.add_line { |line| line.center.write_bold(repo_error) }
+    end
+
+    screen.footer.add_line { |line| line.write.write_dim(fill("─")) }
+    screen.footer.add_line { |line| line.center.write_dim("Enter: Confirm  ↑/↓: Toggle visibility  Esc: Cancel") }
+
+    screen.flush
+  end
+
+  def finalize_repo(entry, repo_buffer, visibility)
+    repo_name = repo_buffer.strip
+
+    return "Repo name cannot be empty" if repo_name.empty?
+    return "Repo name cannot contain /" if repo_name.include?('/')
+    return "Visibility must be private or public" unless %w[private public].include?(visibility)
+    return "Directory already contains .git: #{entry[:path]}" if File.exist?(File.join(entry[:path], '.git'))
+
+    @selected = { type: :repo, path: entry[:path], repo_name: repo_name, visibility: visibility }
+    true
+  end
+
+  def repo_name_from_basename(basename)
+    basename.sub(/^\d{4}-\d{2}-\d{2}-/, '')
+  end
+
   def handle_selection(try_dir)
     # Select existing try directory
     @selected = { type: :cd, path: try_dir[:path] }
@@ -972,18 +1104,21 @@ if __FILE__ == $0
       Usage:
         try [query]           Interactive directory selector
         try clone <url>       Clone repo into dated directory
+        try repo [path]       Create GitHub repo from a try directory
         try worktree <name>   Create worktree from current git repo
         try --help            Show this help
 
       Commands:
         init [path]           Output shell function definition
         clone <url> [name]    Clone git repo into date-prefixed directory
+        repo [path] [name]    Publish plain try directory to GitHub
         worktree <name>       Create worktree in dated directory
 
       Examples:
         try                   Open interactive selector
         try project           Selector with initial filter
         try clone https://github.com/user/repo
+        try repo 2026-05-16-my-app
         try worktree feature-branch
 
       Manual mode (without alias):
@@ -998,6 +1133,7 @@ if __FILE__ == $0
         Enter              Select / Create new
         Ctrl-R             Rename
         Ctrl-G             Graduate (promote try to project)
+        Ctrl-U             Create GitHub repo
         Ctrl-D             Mark for deletion
         Ctrl-T             Create new try
         Esc                Cancel
@@ -1123,6 +1259,7 @@ if __FILE__ == $0
         when 'CTRL-P', 'CTRLP' then keys << "\x10"
         when 'CTRL-R', 'CTRLR' then keys << "\x12"
         when 'CTRL-T', 'CTRLT' then keys << "\x14"
+        when 'CTRL-U', 'CTRLU' then keys << "\x15"
         when 'CTRL-W', 'CTRLW' then keys << "\x17"
         when /^TYPE=/i
           tok.sub(/^TYPE=/i, '').each_char { |ch| keys << ch }
@@ -1167,6 +1304,68 @@ if __FILE__ == $0
     end
 
     script_clone(File.join(tries_path, dir_name), git_uri)
+  end
+
+  def repo_name_from_path(path)
+    File.basename(path).sub(/^\d{4}-\d{2}-\d{2}-/, '')
+  end
+
+  def extract_repo_visibility!(args)
+    visibility = "private"
+    if args.delete('--public')
+      visibility = "public"
+    end
+    if args.delete('--private')
+      visibility = "private"
+    end
+    visibility
+  end
+
+  def resolve_repo_source(source_arg, tries_path)
+    return Dir.pwd if source_arg.nil? || source_arg.strip.empty?
+
+    begin
+      expanded = File.expand_path(source_arg)
+      return expanded if Dir.exist?(expanded)
+    rescue Errno::ENOENT
+      # The test runner can remove the current working directory after prior
+      # eval-based tests. In that case, unresolved relative paths still fall
+      # through to the TRY_PATH child below.
+    end
+
+    File.join(tries_path, source_arg)
+  end
+
+  def cmd_repo!(args, tries_path)
+    visibility = extract_repo_visibility!(args)
+    source_arg = args.shift
+    repo_name = args.shift
+    source = resolve_repo_source(source_arg, tries_path)
+
+    unless Dir.exist?(source)
+      warn "Error: repo source directory does not exist: #{source}"
+      exit 1
+    end
+
+    if File.exist?(File.join(source, '.git'))
+      warn "Error: repo source already contains .git: #{source}"
+      exit 1
+    end
+
+    repo_name = repo_name_from_path(source) if repo_name.nil? || repo_name.strip.empty?
+    repo_name = repo_name.strip
+
+    if repo_name.empty?
+      warn "Error: repo name cannot be empty"
+      exit 1
+    end
+
+    if repo_name.include?('/')
+      warn "Error: repo name cannot contain /"
+      exit 1
+    end
+
+    script_repo(source, repo_name, visibility)
   end
 
   def cmd_init!(args, tries_path)
@@ -1380,6 +1579,8 @@ if __FILE__ == $0
       script_rename(result[:base_path], result[:old], result[:new])
     when :ascend
       script_ascend(result[:source], result[:dest], result[:basename], result[:base_path])
+    when :repo
+      script_repo(result[:path], result[:repo_name], result[:visibility])
     else
       script_cd(result[:path])
     end
@@ -1429,6 +1630,20 @@ if __FILE__ == $0
     end
     src = repo || Dir.pwd
     ["mkdir -p #{q(path)}", "echo #{q("Using git worktree to create this trial from #{src}.")}", worktree_cmd] + script_cd(path)
+  end
+
+  def script_repo(path, repo_name, visibility)
+    visibility_flag = visibility == "public" ? "--public" : "--private"
+    [
+      "cd #{q(path)}",
+      "git init",
+      "git add .",
+      "git commit -m #{q('Initial commit')}",
+      "gh repo create #{q(repo_name)} #{visibility_flag} --source=. --remote=origin --push",
+      "rm -rf #{q('.git')}",
+      "echo #{q(path)}",
+      "cd #{q(path)}"
+    ]
   end
 
   def script_delete(paths, base_path)
@@ -1529,6 +1744,9 @@ if __FILE__ == $0
   when 'clone'
     emit_script(cmd_clone!(ARGV, tries_path))
     exit 0
+  when 'repo'
+    emit_script(cmd_repo!(ARGV, tries_path))
+    exit 0
   when 'init'
     cmd_init!(ARGV, tries_path)
     exit 0
@@ -1541,6 +1759,9 @@ if __FILE__ == $0
     when 'clone'
       ARGV.shift
       emit_script(cmd_clone!(ARGV, tries_path))
+    when 'repo'
+      ARGV.shift
+      emit_script(cmd_repo!(ARGV, tries_path))
     when 'worktree'
       ARGV.shift
       repo = ARGV.shift
