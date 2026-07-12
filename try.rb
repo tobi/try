@@ -77,7 +77,7 @@ class TrySelector
       STDERR.print("#{Tui::ANSI::ALT_SCREEN_ON}#{Tui::ANSI.set_title("try")}#{Tui::ANSI::CURSOR_BLINK}")
     end
 
-    @old_winch_handler = Signal.trap('WINCH') { @needs_redraw = true }
+    @old_winch_handler = Signal.trap('WINCH') { @needs_redraw = true } if Signal.list.key?('WINCH')
   end
 
   def restore_terminal

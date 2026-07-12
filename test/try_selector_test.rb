@@ -380,3 +380,28 @@ class FinalizeRenameTest < TrySelectorTestCase
     assert_equal "brand-new", selected[:new]
   end
 end
+
+# -------------------------------------------------------------------
+# setup_terminal — SIGWINCH guard (cross-platform)
+# -------------------------------------------------------------------
+class SetupTerminalWinchGuardTest < TrySelectorTestCase
+  # On platforms without SIGWINCH (e.g. Windows Ruby, RUBY_PLATFORM
+  # x64-mingw-ucrt), Signal.list has no "WINCH" key and Signal.trap('WINCH')
+  # raises ArgumentError: unsupported signal. setup_terminal must not crash
+  # there. Simulate that platform by stubbing Signal.list to omit WINCH.
+  def test_no_raise_when_winch_unsupported
+    sel = build_selector
+    without_winch = Signal.list.reject { |name, _| name == "WINCH" }
+    original_list = Signal.method(:list)
+    Signal.define_singleton_method(:list) { without_winch }
+    begin
+      sel.send(:setup_terminal) # must not raise
+    ensure
+      Signal.define_singleton_method(:list, original_list)
+      sel&.send(:restore_terminal)
+    end
+    # Guard skipped the trap, so no handler was captured.
+    assert_nil sel.instance_variable_get(:@old_winch_handler)
+  end
+end
+
