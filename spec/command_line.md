@@ -99,6 +99,38 @@ try . <name>              # Shorthand (requires name)
 - Returns shell script to cd into worktree
 - `try .` without a name is NOT supported (too easy to invoke accidentally)
 
+### pr
+
+Checkout a pull request into a dated directory.
+
+```
+try pr <arg> [name]
+try exec pr <arg> [name]
+try <github-pr-url> [name]  # URL shorthand
+```
+
+**Arguments:**
+- `arg` (required): PR ID (integer), `user/repo#pr-number`, or a GitHub PR URL
+- `name` (optional): Custom name suffix
+
+**Behavior:**
+- If `arg` is a GitHub PR URL or `user/repo#pr-number`:
+  - Clones the repository into `YYYY-MM-DD-<user>-<repo>-pr-<id>` (or custom name)
+  - Fetches the PR ref (`pull/<id>/head`)
+  - Checks out `FETCH_HEAD` (detached HEAD)
+- If `arg` is a numeric ID and run inside a git repository:
+  - Creates a worktree in `YYYY-MM-DD-<repo>-pr-<id>` (or custom name)
+  - Fetches the PR ref (`pull/<id>/head`) in the main repository
+  - Checks out `FETCH_HEAD` in the worktree
+- Returns shell script to cd into the directory
+
+**Examples:**
+```
+try pr 123                               # From current repo via worktree
+try pr user/repo#456                     # From specific repo via clone
+try pr https://github.com/user/repo/pull/789
+```
+
 ### init
 
 Output shell function definition for shell integration.
