@@ -955,7 +955,7 @@ end
 # Main execution with OptionParser subcommands
 if __FILE__ == $0
 
-  VERSION = "1.9.3"
+  VERSION = "1.9.4"
 
   def print_global_help
     text = <<~HELP
@@ -984,6 +984,7 @@ if __FILE__ == $0
         try                   Open interactive selector
         try project           Selector with initial filter
         try clone https://github.com/user/repo
+        try https://github.com/user/repo/pull/123
         try worktree feature-branch
 
       Manual mode (without alias):
@@ -1073,10 +1074,24 @@ if __FILE__ == $0
     end
   end
 
+  def github_pr_details(uri)
+    return nil unless uri
+
+    match = uri.match(%r{\Ahttps?://(?:www\.)?github\.com/([^/]+)/([^/]+)/pull/(\d+)/?\z})
+    return nil unless match
+
+    {
+      user: match[1],
+      repo: match[2].sub(/\.git\z/, ''),
+      pr_id: match[3],
+      git_uri: "https://github.com/#{match[1]}/#{match[2].sub(/\.git\z/, '')}.git"
+    }
+  end
+
   def generate_clone_directory_name(git_uri, custom_name = nil)
     return custom_name if custom_name && !custom_name.empty?
 
-    parsed = parse_git_uri(git_uri)
+    parsed = github_pr_details(git_uri) || parse_git_uri(git_uri)
     return nil unless parsed
 
     date_prefix = Time.now.strftime("%Y-%m-%d")
@@ -1177,7 +1192,12 @@ if __FILE__ == $0
       exit 1
     end
 
-    script_clone(File.join(tries_path, dir_name), git_uri)
+    path = File.join(tries_path, dir_name)
+    if pr = github_pr_details(git_uri)
+      script_clone_pr(path, pr[:git_uri], pr[:pr_id])
+    else
+      script_clone(path, git_uri)
+    end
   end
 
   def cmd_init!(args, tries_path)
@@ -1366,7 +1386,11 @@ if __FILE__ == $0
         exit 1
       end
       full_path = File.join(tries_path, dir_name)
-      return script_clone(full_path, git_uri)
+      if pr = github_pr_details(git_uri)
+        return script_clone_pr(full_path, pr[:git_uri], pr[:pr_id])
+      else
+        return script_clone(full_path, git_uri)
+      end
     end
 
     # Regular interactive selector
@@ -1452,6 +1476,17 @@ if __FILE__ == $0
 
   def script_clone(path, uri)
     ["mkdir -p #{q(path)}", "echo #{q("Using git clone to create this trial from #{uri}.")}", "git clone '#{uri}' #{q(path)}"] + script_cd(path)
+  end
+
+  def script_clone_pr(path, uri, pr_id)
+    ref = "pull/#{pr_id}/head"
+    [
+      "mkdir -p #{q(path)}",
+      "echo #{q("Using git clone to create this trial from #{uri} PR ##{pr_id}.")}",
+      "git clone #{q(uri)} #{q(path)}",
+      "git -C #{q(path)} fetch origin #{q(ref)}",
+      "git -C #{q(path)} checkout --detach FETCH_HEAD"
+    ] + script_cd(path)
   end
 
   def script_worktree(path, repo = nil)

@@ -63,6 +63,7 @@ try <url> [name]            # URL shorthand (same as clone)
 **Behavior:**
 - Creates directory named `YYYY-MM-DD-<user>-<repo>` (extracted from URL)
 - Clones repository into that directory
+- For a GitHub pull request URL (`https://github.com/user/repo/pull/123`), clones the repository, fetches `pull/123/head`, and checks out the PR in detached HEAD state
 - Returns shell script to cd into cloned directory
 
 **Examples:**
@@ -75,6 +76,10 @@ try clone https://github.com/user/repo myproject
 
 try https://github.com/tobi/try.git
 # URL shorthand (same as first example)
+
+try https://github.com/tobi/try/pull/124
+# Clones the repository and checks out PR 124
+# Creates: 2025-11-30-tobi-try
 
 try clone git@github.com:tobi/try.git
 # SSH URL also works: 2025-11-30-tobi-try

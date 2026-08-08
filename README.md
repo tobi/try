@@ -155,6 +155,10 @@ try clone https://github.com/tobi/try.git my-fork
 # Shorthand syntax (no need to type 'clone')
 try https://github.com/tobi/try.git
 # Creates: 2025-08-27-tobi-try
+
+# Paste a GitHub pull request URL to clone and check out that PR
+try https://github.com/tobi/try/pull/124
+# Creates: 2025-08-27-tobi-try
 ```
 
 Supported git URI formats:
@@ -163,8 +167,13 @@ Supported git URI formats:
 - `https://gitlab.com/user/repo.git` (GitLab)
 - `git@host.com:user/repo.git` (SSH other hosts)
 - `ssh://git@host.com:port/user/repo.git` (SSH other hosts with custom port)
+- `user@host:path/to/repo.git` (nested SCP-style SSH URLs)
+- `https://github.com/user/repo/pull/123` (GitHub pull requests)
 
-The `.git` suffix is automatically removed from URLs when generating directory names.
+A GitHub pull request URL clones the main repository, fetches the PR ref, and
+checks it out in detached HEAD state. The directory name is based on the main
+repository URL, not the `/pull/<number>` suffix. The `.git` suffix is
+automatically removed from URLs when generating directory names.
 
 ### Keyboard Shortcuts
 
