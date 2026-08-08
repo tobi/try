@@ -35,6 +35,7 @@ try() {
 
 Key elements:
 - Function name: `try`
+- Calls the resolved `try` executable directly, relying on its shebang or package wrapper
 - Captures `try exec` output to local variable
 - Redirects stderr to `/dev/tty` (TUI renders to stderr)
 - Exit code 0: Evaluates the output (executes cd, git clone, etc.)
@@ -56,10 +57,10 @@ end
 ## Path Embedding
 
 The init output must embed:
-1. The full path to the `try` binary (resolved at init time)
+1. The full path to the `try` binary (resolved at init time; a canonical store path is acceptable when invoked through a symlink)
 2. The default tries path (typically `~/src/tries`)
 
-This ensures the wrapper always calls the correct binary regardless of `$PATH` changes.
+This ensures the wrapper always calls the correct binary regardless of `$PATH` changes, while preserving executable shebangs and package-level launchers.
 
 ## Installation Instructions
 
