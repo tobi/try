@@ -24,7 +24,7 @@ Supported shells:
 ```bash
 try() {
   local out
-  out=$('/path/to/try' exec --path '/default/tries/path' "$@" 2>/dev/tty)
+  out=$('/path/to/ruby' '/path/to/try' exec --path '/default/tries/path' "$@" 2>/dev/tty)
   if [ $? -eq 0 ]; then
     eval "$out"
   else
@@ -35,6 +35,9 @@ try() {
 
 Key elements:
 - Function name: `try`
+- Pins the Ruby interpreter that was used to run `init` (via `RbConfig.ruby`), so the
+  function works even when Ruby is not on `$PATH` (e.g. NixOS, where Ruby only exists
+  inside the `try` package's wrapper)
 - Captures `try exec` output to local variable
 - Redirects stderr to `/dev/tty` (TUI renders to stderr)
 - Exit code 0: Evaluates the output (executes cd, git clone, etc.)
@@ -44,7 +47,7 @@ Key elements:
 
 ```fish
 function try
-  set -l out (/path/to/try exec --path '/default/tries/path' $argv 2>/dev/tty | string collect)
+  set -l out ('/path/to/ruby' '/path/to/try' exec --path '/default/tries/path' $argv 2>/dev/tty | string collect)
   if test $pipestatus[1] -eq 0
     eval $out
   else
@@ -56,10 +59,13 @@ end
 ## Path Embedding
 
 The init output must embed:
-1. The full path to the `try` binary (resolved at init time)
-2. The default tries path (typically `~/src/tries`)
+1. The absolute path to the Ruby interpreter that ran `init` (`RbConfig.ruby`),
+   resolved at init time so the function does not depend on Ruby being in `$PATH`
+2. The full path to the `try` script (resolved at init time)
+3. The default tries path (typically `~/src/tries`)
 
-This ensures the wrapper always calls the correct binary regardless of `$PATH` changes.
+This ensures the wrapper always calls the correct binary and interpreter regardless
+of `$PATH` changes.
 
 ## Installation Instructions
 
