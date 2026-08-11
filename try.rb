@@ -331,7 +331,7 @@ class TrySelector
     width = screen.width
     height = screen.height
 
-    screen.header.add_line { |line| line.write << emoji("🏠") << Tui::Text.accent(" Try Directory Selection") }
+    screen.header.add_line { |line| line.write << emoji("🏠") << Tui::Text.accent("Try Directory Selection") }
     screen.header.add_line { |line| line.write.write_dim(fill("─")) }
     screen.header.add_line do |line|
       prefix = "Search: "
@@ -405,7 +405,7 @@ class TrySelector
     else
       emoji("📁")
     end
-    line.write << icon << " "
+    line.write << icon
 
     plain_name, rendered_name = formatted_entry_name(entry, selected: is_selected)
     prefix_width = 5
@@ -433,11 +433,11 @@ class TrySelector
     line.write << (is_selected ? Tui::Text.highlight("→ ") + selected_foreground : "  ")
     date_prefix = Time.now.strftime("%Y-%m-%d")
     label = if @input_buffer.empty?
-      "📂 Create new: #{date_prefix}-"
+      "Create new: #{date_prefix}-"
     else
-      "📂 Create new: #{date_prefix}-#{@input_buffer}"
+      "Create new: #{date_prefix}-#{@input_buffer}"
     end
-    line.write << label
+    line.write << emoji("📂") << label
   end
 
   def formatted_entry_name(entry, selected: false)
@@ -609,12 +609,12 @@ class TrySelector
     screen = Tui::Screen.new(io: STDERR)
 
     screen.header.add_line do |line|
-      line.center << emoji("✏️") << Tui::Text.accent("  Rename directory")
+      line.center << emoji("✏️", "  ") << Tui::Text.accent("Rename directory")
     end
     screen.header.add_line { |line| line.write.write_dim(fill("─")) }
 
     screen.body.add_line do |line|
-      line.write << emoji("📁") << " #{current_name}"
+      line.write << emoji("📁") << current_name
     end
 
     # Add empty lines, then centered input prompt
@@ -731,12 +731,12 @@ class TrySelector
     screen = Tui::Screen.new(io: STDERR)
 
     screen.header.add_line do |line|
-      line.center << emoji("🚀") << Tui::Text.accent("  Graduate try to project")
+      line.center << emoji("🚀", "  ") << Tui::Text.accent("Graduate try to project")
     end
     screen.header.add_line { |line| line.write.write_dim(fill("─")) }
 
     screen.body.add_line do |line|
-      line.write << emoji("📁") << " #{current_name}"
+      line.write << emoji("📁") << current_name
     end
     screen.body.add_line
 
@@ -900,13 +900,13 @@ class TrySelector
 
     count = marked_items.length
     screen.header.add_line do |line|
-      line.center << emoji("🗑️") << Tui::Text.accent("  Delete #{count} #{count == 1 ? 'directory' : 'directories'}?")
+      line.center << emoji("🗑️", "  ") << Tui::Text.accent("Delete #{count} #{count == 1 ? 'directory' : 'directories'}?")
     end
     screen.header.add_line { |line| line.write.write_dim(fill("─")) }
 
     marked_items.each do |item|
       screen.body.add_line(background: Tui::Palette::DANGER_BG) do |line|
-        line.write << emoji("🗑️") << " #{item[:basename]}"
+        line.write << emoji("🗑️") << item[:basename]
       end
     end
 
@@ -1028,6 +1028,11 @@ if __FILE__ == $0
   Tui.disable_colors! if disable_colors
   Tui.disable_colors! if ENV['NO_COLOR'] && !ENV['NO_COLOR'].empty?
 
+  disable_emoji = ARGV.delete('--no-emoji')
+
+  Tui.disable_emoji! if disable_emoji
+  Tui.disable_emoji! if ENV['NO_EMOJI'] && !ENV['NO_EMOJI'].empty?
+
   # Global help: show for --help/-h anywhere
   if ARGV.include?("--help") || ARGV.include?("-h")
     print_global_help
@@ -1128,7 +1133,7 @@ if __FILE__ == $0
   and_exit = !!ARGV.delete('--and-exit')
   and_keys_raw = extract_option_with_value!(ARGV, '--and-keys')
   and_confirm = extract_option_with_value!(ARGV, '--and-confirm')
-  # Note: --no-expand-tokens and --no-colors are processed early (before --help check)
+  # Note: --no-expand-tokens, --no-colors, and --no-emoji are processed early (before --help check)
 
   command = ARGV.shift
 

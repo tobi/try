@@ -23,9 +23,10 @@ require "io/console"
 
 module Tui
   @colors_enabled = ENV["NO_COLORS"].to_s.empty?
+  @emoji_enabled = ENV["NO_EMOJI"].to_s.empty?
 
   class << self
-    attr_accessor :colors_enabled
+    attr_accessor :colors_enabled, :emoji_enabled
 
     def colors_enabled?
       @colors_enabled
@@ -37,6 +38,18 @@ module Tui
 
     def enable_colors!
       @colors_enabled = true
+    end
+
+    def emoji_enabled?
+      @emoji_enabled
+    end
+
+    def disable_emoji!
+      @emoji_enabled = false
+    end
+
+    def enable_emoji!
+      @emoji_enabled = true
     end
   end
 
@@ -300,9 +313,10 @@ module Tui
       SegmentWriter::FillSegment.new(char.to_s)
     end
 
-    # Use for emoji characters - precomputes width and enables fast-path
-    def emoji(char)
-      SegmentWriter::EmojiSegment.new(char)
+    # Use for emoji characters - precomputes width and enables fast-path.
+    # `trailing` is the gap after the icon, it disappears with the emoji when disabled.
+    def emoji(char, trailing = " ")
+      SegmentWriter::EmojiSegment.new(Tui.emoji_enabled? ? "#{char}#{trailing}" : "")
     end
   end
 
