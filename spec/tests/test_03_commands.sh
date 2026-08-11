@@ -26,6 +26,14 @@ else
     fail "exec clone should include cd" "contains cd command" "$output" "command_line.md#clone"
 fi
 
+# Test: exec init outputs shell function (regression: re-sourcing .zshrc)
+output=$(try_run --path="$TEST_TRIES" exec init "$TEST_TRIES" 2>&1)
+if echo "$output" | grep -q "try()"; then
+    pass
+else
+    fail "exec init should output shell function" "contains 'try()'" "$output" "command_line.md#init"
+fi
+
 # Test: exec cd is equivalent to exec (default command)
 output1=$(try_run --path="$TEST_TRIES" --and-keys=$'\r' exec 2>/dev/null)
 output2=$(try_run --path="$TEST_TRIES" --and-keys=$'\r' exec cd 2>/dev/null)
