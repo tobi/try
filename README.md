@@ -261,6 +261,18 @@ After installation, add to your shell:
   try init ~/src/tries | source
   ```
 
+## Arch Linux
+
+Install from the AUR:
+
+```bash
+yay -S try-cli
+# or
+paru -S try-cli
+```
+
+This is the native Spinel binary of this repo (the old C rewrite at tobi/try-cli is archived). Then add shell integration (see Installation above). Building the native binary yourself is still optional via `make native`.
+
 ## Why Ruby?
 
 - One file, no dependencies
