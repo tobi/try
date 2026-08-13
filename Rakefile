@@ -28,9 +28,10 @@ task :lint do
     next
   end
 
-  # try.rb require_relatives lib/; compiling the entrypoint type-checks the whole program.
-  Tempfile.create(['try-spinel-syntax', '.c']) do |tmp|
-    sh spinel_cmd, '-c', 'try.rb', '-o', tmp.path
+  RUBY_SOURCES.each do |file|
+    Tempfile.create(['try-spinel-syntax', '.c']) do |tmp|
+      sh spinel_cmd, '-c', file, '-o', tmp.path
+    end
   end
 end
 

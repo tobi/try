@@ -24,7 +24,7 @@
 
 ## Build, Test, and Development Commands
 - `rake` / `rake test`: lint (MRI + Spinel if present), unit tests, spec runner.
-- `rake lint`: `ruby -c` always; `spinel -c try.rb` when Spinel is available.
+- `rake lint`: `ruby -c` always; `spinel -c` on `try.rb` and `lib/**/*.rb` when Spinel is available.
 - `nix run`: Run the packaged CLI (e.g., `nix run . -- --help`).
 - `nix build`: Build the binary derivation; output at `./result/bin/try`.
 - `./try.rb init ~/src/tries`: Emit shell function for your shell config.
@@ -37,7 +37,7 @@
 - MRI: `ruby try.rb` / the `try-cli` gem
 - Spinel AOT: `spinel try.rb -o dist/try` (see `make native`)
 
-A construct that only one of them can run is a bug. Prefer stdlib and Spinel-friendly Ruby (no `eval`, `method_missing`, `FileUtils`, `IO#raw`/`IO.console`, etc.) or keep an MRI-compatible shim like `TryCompat`. `rake lint` syntax-checks with `ruby -c` always, and with `spinel -c` when Spinel is on `PATH` (or `SPINEL=`). If Spinel is missing, lint **warns** and continues.
+A construct that only one of them can run is a bug. Prefer stdlib and Spinel-friendly Ruby (no `eval`, `method_missing`, `FileUtils`, `IO#raw`/`IO.console`, etc.) or keep an MRI-compatible shim like `TryCompat`. `rake lint` syntax-checks with `ruby -c` always, and with `spinel -c` on those same files when Spinel is on `PATH` (or `SPINEL=`). If Spinel is missing, lint **warns** and continues.
 
 ## Coding Style & Naming Conventions
 - Ruby, 2-space indent, standard library only; keep it single-file unless necessary.
@@ -57,7 +57,7 @@ A construct that only one of them can run is a bug. Prefer stdlib and Spinel-fri
 **Important**: Specs must reflect the full feature set of `try`. They serve as the canonical reference for behavior, enabling new implementations (in any language) to be validated against the same test suite. When adding or changing features, update both the relevant spec markdown and add corresponding tests.
 
 ## Testing Guidelines
-- `rake` runs lint + unit + spec. Lint is `ruby -c` on `try.rb` and `lib/**/*.rb`, plus `spinel -c try.rb` when Spinel is installed (`SPINEL=/path/to/spinel` to point at a local build). Missing Spinel is a warning, not a hard fail.
+- `rake` runs lint + unit + spec. Lint is `ruby -c` on `try.rb` and `lib/**/*.rb`, plus `spinel -c` on each of `try.rb` and `lib/**/*.rb` when Spinel is installed (`SPINEL=/path/to/spinel` to point at a local build). Missing Spinel is a warning, not a hard fail.
 - Primary spec run: `./spec/tests/runner.sh ./try.rb` (MRI).
 - Native spec run: `make native-test` / `bash spec/tests/runner.sh dist/try` (Spinel). Behavior must match; the spec runner is language-agnostic.
 - Manual flows for exploratory testing:
