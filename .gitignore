@@ -1,3 +1,4 @@
 *.callgrind*
 *.gem
 .claude/settings.local.json
+dist/

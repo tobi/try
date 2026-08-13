@@ -48,6 +48,7 @@
 
 ## Testing Guidelines
 - Primary testing is via the spec system: `./spec/tests/runner.sh ./try.rb`
+- Native binary (optional, Spinel): `make native-test` / `bash spec/tests/runner.sh dist/try`
 - Manual flows for exploratory testing:
   - `TRY_PATH=$(mktemp -d) ./try.rb cd` then create/select directories.
   - Validate delete confirmation and scoring by changing `mtime`/`ctime`.

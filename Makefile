@@ -116,3 +116,17 @@ l: lint ## Shortcut for lint
 
 .PHONY: i
 i: install ## Shortcut for install
+
+# Native binary via Spinel (optional)
+SPINEL ?= spinel
+NATIVE  = dist/try
+
+.PHONY: native native-test
+native: $(NATIVE)
+
+$(NATIVE): try.rb lib/tui.rb lib/fuzzy.rb
+	mkdir -p dist
+	$(SPINEL) try.rb -o $(NATIVE)
+
+native-test: $(NATIVE)
+	bash spec/tests/runner.sh $(NATIVE)

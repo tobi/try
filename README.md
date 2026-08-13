@@ -55,6 +55,20 @@ echo 'eval "$(ruby ~/.local/try.rb init ~/src/tries)"' >> ~/.zshrc
 echo '~/.local/try.rb init ~/src/tries | source' >> ~/.config/fish/config.fish
 ```
 
+
+### Native binary (optional)
+
+Compile a native `try` with [Spinel](https://github.com/matz/spinel). Build Spinel from source; [PR 3906](https://github.com/matz/spinel/pull/3906) is required so `IO#tty?` / `#winsize` work on handles that are not statically typed IO.
+
+```bash
+make native SPINEL=/path/to/spinel
+./dist/try --help
+eval "$(./dist/try init)"   # wires the shell function to the binary, not MRI
+make native-test SPINEL=/path/to/spinel
+```
+
+MRI `ruby try.rb` and the gem keep working. `dist/try init` emits the binary path; `ruby try.rb init` still emits `/usr/bin/env ruby '…/try.rb'`.
+
 ## The Problem
 
 You're learning Redis. You create `/tmp/redis-test`. Then `~/Desktop/redis-actually`. Then `~/projects/testing-redis-again`. Three weeks later you can't find that brilliant connection pooling solution you wrote at 2am.

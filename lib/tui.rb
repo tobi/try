@@ -7,14 +7,16 @@ require "io/console"
 # Usage pattern:
 #   include Tui::Helpers
 #   screen = Tui::Screen.new
-#   screen.header.add_line { |line| line.write << Tui::Text.bold("📁 Try Selector") }
+#   line = screen.header.add_line
+#   line.write << Tui::Text.bold("📁 Try Selector")
 #   search_line = screen.body.add_line
 #   search_line.write_dim("Search:").write(" ")
 #   search_line.write << screen.input("Type to filter…", value: query, cursor: cursor)
 #   list_line = screen.body.add_line(background: Tui::Palette::SELECTED_BG)
 #   list_line.write << Tui::Text.highlight("→ ") << name
 #   list_line.right.write_dim(metadata)
-#   screen.footer.add_line { |line| line.write_dim("↑↓ navigate  Enter select  Esc cancel") }
+#   line = screen.footer.add_line
+#   line.write_dim("↑↓ navigate  Enter select  Esc cancel")
 #   screen.flush
 #
 # The screen owns a single InputField (enforced by #input). Lines support
@@ -124,8 +126,8 @@ module Tui
 
       # Slow path: calculate width per codepoint (avoids each_char + ord)
       width = 0
-      stripped.each_codepoint do |code|
-        width += char_width(code)
+      stripped.each_char do |ch|
+        width += char_width(ch.ord)
       end
       width
     end
@@ -322,24 +324,17 @@ module Tui
 
           begin
             s_rows, s_cols = stream.winsize
-            rows ||= s_rows
-            cols ||= s_cols
+            # Spinel returns [0,0] for non-ttys (no exception). 0 is truthy in
+            # Ruby, so treat non-positive sizes as missing.
+            rows ||= s_rows if s_rows.to_i > 0
+            cols ||= s_cols if s_cols.to_i > 0
           rescue IOError, Errno::ENOTTY, Errno::EOPNOTSUPP, Errno::ENODEV
             next
           end
         end
 
-        if (!rows || !cols)
-          begin
-            console = IO.console
-            if console
-              c_rows, c_cols = console.winsize
-              rows ||= c_rows
-              cols ||= c_cols
-            end
-          rescue IOError, Errno::ENOTTY, Errno::EOPNOTSUPP, Errno::ENODEV
-          end
-        end
+        # IO.console is not available under Spinel; STDERR/STDIN#winsize
+        # (io/console) already covers the TTY case above.
 
         rows ||= 24
         cols ||= 80
@@ -400,7 +395,7 @@ module Tui
           cursor_row = current_row + 1
           cursor_col = line.cursor_column(@input_field, @width)
         end
-        line.render(buf, @width)
+        buf << line.render(nil, @width)
         current_row += 1
       end
 
@@ -416,7 +411,7 @@ module Tui
           cursor_row = current_row + 1
           cursor_col = line.cursor_column(@input_field, @width)
         end
-        line.render(buf, @width)
+        buf << line.render(nil, @width)
         current_row += 1
         body_rendered += 1
       end
@@ -426,7 +421,8 @@ module Tui
       gap = body_space - body_rendered
       blank_line = "\r#{ANSI::CLEAR_EOL}#{' ' * (@width - 1)}\n"
       blank_line_no_newline = "\r#{ANSI::CLEAR_EOL}#{' ' * (@width - 1)}"
-      gap.times do |i|
+      i = 0
+      while i < gap
         # Last gap line without newline if no footer follows
         if i == gap - 1 && @footer.lines.empty?
           buf << blank_line_no_newline
@@ -434,6 +430,7 @@ module Tui
           buf << blank_line
         end
         current_row += 1
+        i += 1
       end
 
       # Render footer at the bottom (sticky)
@@ -444,9 +441,9 @@ module Tui
         end
         # Last line: don't write \n to avoid scrolling
         if idx == footer_lines - 1
-          line.render_no_newline(buf, @width)
+          buf << line.render_no_newline(nil, @width)
         else
-          line.render(buf, @width)
+          buf << line.render(nil, @width)
         end
         current_row += 1
       end
@@ -480,7 +477,7 @@ module Tui
       @lines = []
     end
 
-    def add_line(background: nil, truncate: true)
+    def add_line(background = nil, truncate = true)
       line = Line.new(@screen, background: background, truncate: truncate)
       @lines << line
       yield line if block_given?
@@ -488,10 +485,9 @@ module Tui
     end
 
     def divider(char: '─')
-      add_line do |line|
+      line = add_line
         span = [@screen.width - 1, 1].max
-        line.write << char * span
-      end
+        line.write.write(char * span)
     end
 
     def clear
@@ -632,7 +628,8 @@ module Tui
       buffer << ANSI::RESET
       buffer << "\n" if trailing_newline
 
-      io << buffer
+      io << buffer if io
+      buffer
     end
   end
 
@@ -642,13 +639,13 @@ module Tui
     class FillSegment
       attr_reader :char, :style
 
-      def initialize(char, style: nil)
+      def initialize(char, style = nil)
         @char = char.to_s
         @style = style
       end
 
       def with_style(style)
-        self.class.new(char, style: style)
+        FillSegment.new(char, style)
       end
     end
 
@@ -661,8 +658,8 @@ module Tui
         # Precompute: emoji = 2, variation selectors = 0
         @width = 0
         @char_count = 0
-        @char.each_codepoint do |code|
-          w = Metrics.char_width(code)
+        @char.each_char do |ch|
+          w = Metrics.char_width(ch.ord)
           @width += w
           @char_count += 1 if w > 0  # Don't count zero-width chars
         end
@@ -714,15 +711,27 @@ module Tui
     alias << write
 
     def write_dim(text)
-      write(style_segment(text, :dim) { |value| dim(value) })
+      if text.is_a?(FillSegment)
+        write(text.with_style(:dim))
+      else
+        write(dim(text))
+      end
     end
 
     def write_bold(text)
-      write(style_segment(text, :bold) { |value| bold(value) })
+      if text.is_a?(FillSegment)
+        write(text.with_style(:bold))
+      else
+        write(bold(text))
+      end
     end
 
     def write_highlight(text)
-      write(style_segment(text, :highlight) { |value| highlight(value) })
+      if text.is_a?(FillSegment)
+        write(text.with_style(:highlight))
+      else
+        write(highlight(text))
+      end
     end
 
     def to_s(width: nil)
