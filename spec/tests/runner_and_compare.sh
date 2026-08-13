@@ -102,6 +102,13 @@ compare_test() {
     norm1=$(echo "$out1" | sed 's/\x1b\[[0-9;]*m//g')
     norm2=$(echo "$out2" | sed 's/\x1b\[[0-9;]*m//g')
 
+    # Init snippets invoke MRI via `ruby try.rb` and the native binary via $0.
+    # Same wrapper otherwise — collapse the exec prefix so the compare is exact.
+    if [ "$name" = "init command" ]; then
+        norm1=$(printf '%s\n' "$norm1" | sed -E "s#/usr/bin/env ruby '[^']+'#'TRY'#g; s#'[^']+' exec#'TRY' exec#g")
+        norm2=$(printf '%s\n' "$norm2" | sed -E "s#/usr/bin/env ruby '[^']+'#'TRY'#g; s#'[^']+' exec#'TRY' exec#g")
+    fi
+
     if [ "$norm1" = "$norm2" ] && [ "$exit1" = "$exit2" ]; then
         echo -en "${GREEN}.${NC}"
         TESTS_SAME=$((TESTS_SAME + 1))

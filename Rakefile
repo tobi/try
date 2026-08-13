@@ -35,12 +35,24 @@ task :lint do
   end
 end
 
-desc "Run shell spec compliance tests"
+desc "Run shell spec compliance tests (MRI)"
 task :spec do
-  sh "bash spec/tests/runner.sh ./try.rb"
+  sh 'bash', 'spec/tests/runner.sh', './try.rb'
 end
 
-desc "Run all tests (lint + unit + spec)"
-task test: [:lint, :unit, :spec]
+desc "Emit dist/try.c, compile dist/try, spec it, and compare with MRI"
+task :spec_spinel do
+  unless spinel_available?
+    warn "warning: spinel not found (#{spinel_cmd}); skipping native spec + compare"
+    next
+  end
+
+  sh 'make', 'native', "SPINEL=#{spinel_cmd}"
+  sh 'bash', 'spec/tests/runner.sh', 'dist/try'
+  sh 'bash', 'spec/tests/runner_and_compare.sh', './try.rb', 'dist/try'
+end
+
+desc "Run all tests (lint + unit + spec; native spec+compare if Spinel is present)"
+task test: [:lint, :unit, :spec, :spec_spinel]
 
 task default: :test
