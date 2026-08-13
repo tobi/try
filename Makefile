@@ -4,6 +4,7 @@ SHELL := /bin/bash
 RUBY := ruby
 SCRIPT := try.rb
 TEST_DIR := tests
+VERSION := $(shell cat VERSION 2>/dev/null || echo "dev")
 
 # Default target
 .PHONY: help
@@ -145,3 +146,10 @@ native-test: $(NATIVE)
 
 native-compare: $(NATIVE)
 	bash spec/tests/runner_and_compare.sh ./try.rb $(NATIVE)
+
+# Update PKGBUILD and .SRCINFO with current VERSION (AUR try-cli)
+.PHONY: update-pkg
+update-pkg: ## Sync PKGBUILD pkgver from VERSION and regenerate .SRCINFO
+	@perl -pi -e 's/^pkgver=.*/pkgver=$(VERSION)/' PKGBUILD
+	@makepkg --printsrcinfo > .SRCINFO
+	@echo "Updated PKGBUILD and .SRCINFO to version $(VERSION)"

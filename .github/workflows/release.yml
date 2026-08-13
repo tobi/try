@@ -33,3 +33,87 @@ jobs:
 
       - name: Push to RubyGems
         run: gem push try-cli-*.gem
+
+  # Upload try-linux-x86_64.tar.gz (a `try` binary at the tarball root) to the
+  # GitHub release. The AUR PKGBUILD fetches that asset. Spinel is not on GHA
+  # by default — do not clone/build matz/spinel here. This job no-ops unless
+  # `spinel` is already on PATH. continue-on-error so a missing native build
+  # never fails the gem release.
+  native-release:
+    name: Native Linux release asset
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: [release]
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Build native binary if Spinel is available
+        run: |
+          if ! command -v spinel >/dev/null 2>&1; then
+            echo "Spinel not on runner; skip native build."
+            echo "Upload try-linux-x86_64.tar.gz (contains a try binary at the root) to the GitHub release so AUR can fetch it."
+            exit 0
+          fi
+          make native
+          tar -czf try-linux-x86_64.tar.gz -C dist try
+
+      - name: Upload native tarball to GitHub Release
+        if: hashFiles('try-linux-x86_64.tar.gz') != ''
+        uses: softprops/action-gh-release@v2
+        with:
+          files: try-linux-x86_64.tar.gz
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # Publish the try-cli AUR package (prebuilt native binary).
+  # AUR_USERNAME, AUR_EMAIL, and AUR_SSH_PRIVATE_KEY must be copied from
+  # tobi/try-cli's OpenSource environment onto this repo's OpenSource
+  # environment before this job can publish. Until those secrets exist,
+  # this job will fail and AUR stays at try-cli 1.5.3-1 — that is expected.
+  aur-publish:
+    name: Publish to AUR
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: [release]
+    runs-on: ubuntu-latest
+    container: archlinux:latest
+    environment: OpenSource
+
+    steps:
+    - name: Install dependencies
+      run: pacman -Sy --noconfirm git openssh pacman-contrib base-devel sudo
+
+    - name: Setup build user
+      run: |
+        useradd -m builder
+        echo "builder ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
+
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Fix permissions
+      run: chown -R builder:builder .
+
+    - name: Update PKGBUILD version and checksums
+      run: |
+        su builder -c '
+          VERSION=$(cat VERSION | tr -d "\n")
+          sed -i "s/^pkgver=.*/pkgver=$VERSION/" PKGBUILD
+          updpkgsums
+          makepkg --printsrcinfo > .SRCINFO
+        '
+
+    - name: Publish to AUR
+      uses: KSXGitHub/github-actions-deploy-aur@v4.1.1
+      with:
+        pkgname: try-cli
+        pkgbuild: ./PKGBUILD
+        assets: .SRCINFO
+        commit_username: ${{ secrets.AUR_USERNAME }}
+        commit_email: ${{ secrets.AUR_EMAIL }}
+        ssh_private_key: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+        commit_message: "Update to ${{ github.ref_name }}"
+        force_push: true
