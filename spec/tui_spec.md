@@ -217,14 +217,16 @@ Tokens are preserved intact - never split a `{b}...{/b}` pair.
 ### Line Editing (in search input)
 | Key | Action |
 |-----|--------|
-| Ctrl-A | Move cursor to beginning of line |
-| Ctrl-E | Move cursor to end of line |
-| Ctrl-B | Move cursor backward one character |
-| Ctrl-F | Move cursor forward one character |
+| Ctrl-A / Home | Move cursor to beginning of line |
+| Ctrl-E / End | Move cursor to end of line |
+| Ctrl-B / Left arrow | Move cursor backward one character |
+| Ctrl-F / Right arrow | Move cursor forward one character |
 | Backspace / Ctrl-H | Delete character before cursor |
+| Delete | Delete character after cursor |
 | Ctrl-K | Delete from cursor to end of line |
+| Ctrl-U | Delete from start of line to cursor |
 | Ctrl-W | Delete word before cursor (alphanumeric boundaries) |
-| Any printable | Append to query, re-filter |
+| Any printable | Insert at cursor, re-filter |
 
 ## Scrolling
 

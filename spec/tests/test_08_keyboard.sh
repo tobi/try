@@ -133,3 +133,21 @@ if echo "$output" | grep -q "hello.*beta"; then
 else
     fail "Ctrl-W should stop at dash (delete only world)" "hello.*beta in output" "$output" "tui_spec.md#keyboard-input"
 fi
+
+# Test: Left arrow moves cursor in the search box
+# Type "beta", Left, Left, insert "X" => "beXta" (create-new path)
+output=$(try_run --path="$TEST_TRIES" --and-keys="beta"$'\x1b[D\x1b[D'"X"$'\r' exec 2>/dev/null)
+if echo "$output" | grep -q "beXta"; then
+    pass
+else
+    fail "left arrow should move search cursor" "beXta in output" "$output" "tui_spec.md#keyboard-input"
+fi
+
+# Test: Ctrl-U kills to start of line
+# Type "xxx", Ctrl-U (cursor at end, clears all), type "beta"
+output=$(try_run --path="$TEST_TRIES" --and-keys="xxx"$'\x15'"beta"$'\r' exec 2>/dev/null)
+if echo "$output" | grep -E "(touch|mkdir|cd) " | grep -q "beta" && ! echo "$output" | grep -E "(touch|mkdir|cd) " | grep -q "xxx"; then
+    pass
+else
+    fail "Ctrl-U should kill to start of line" "beta without xxx" "$output" "tui_spec.md#keyboard-input"
+fi

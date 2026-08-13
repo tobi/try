@@ -280,7 +280,7 @@ class GetTriesCachingTest < TrySelectorTestCase
     FileUtils.mkdir_p(File.join(@tmpdir, "mydir"))
     sel = build_selector
     first = sel.send(:get_tries)
-    sel.instance_variable_set(:@input_buffer, "my")
+    sel.instance_variable_get(:@search).text = "my"
     second = sel.send(:get_tries)
     refute_same first, second
   end
@@ -376,7 +376,7 @@ class SelectedEntryRenderingTest < TrySelectorTestCase
   def test_selected_create_row_restores_foreground
     Tui.enable_colors!
     screen = Tui::Screen.new(io: StringIO.new, width: 80, height: 5)
-    selector.instance_variable_set(:@input_buffer, "new-entry")
+    selector.instance_variable_get(:@search).text = "new-entry"
 
     selector.send(:render_create_line, screen, true, 80)
     output = StringIO.new

@@ -40,15 +40,49 @@ module TryCompat
     system("stty #{state} 2>/dev/null")
   end
 
+  @raw_active = false
+  @alt_active = false
+  @stty_saved = ""
+  @restored = false
+
+  def self.mark_alt_screen(on)
+    @alt_active = on
+    @restored = false if on
+  end
+
+  def self.emergency_restore
+    return if @restored
+    @restored = true
+    begin
+      if @alt_active
+        STDERR.print("#{Tui::ANSI::RESET}#{Tui::ANSI::CURSOR_DEFAULT}#{Tui::ANSI::SHOW}#{Tui::ANSI::ALT_SCREEN_OFF}")
+        @alt_active = false
+      elsif @raw_active
+        STDERR.print("#{Tui::ANSI::RESET}#{Tui::ANSI::CURSOR_DEFAULT}#{Tui::ANSI::SHOW}")
+      end
+    rescue
+    end
+    if @raw_active
+      stty_set(@stty_saved)
+      @raw_active = false
+    end
+  end
+
   def self.with_raw_tty
     saved = nil
     if STDIN.tty?
       saved = stty_save
+      @stty_saved = saved if @stty_saved.nil? || @stty_saved.empty?
       system("stty raw -echo 2>/dev/null")
+      @raw_active = true
+      @restored = false
     end
     yield
   ensure
-    stty_set(saved) if saved && !saved.empty?
+    if saved && !saved.empty?
+      stty_set(saved)
+      @raw_active = false
+    end
   end
 
   def self.with_cooked_tty
@@ -90,6 +124,8 @@ module TryCompat
   end
 end
 
+at_exit { TryCompat.emergency_restore }
+
 class TrySelector
   include Tui::Helpers
   TRY_PATH = ENV['TRY_PATH'] || File.expand_path("~/src/tries")
@@ -102,10 +138,11 @@ class TrySelector
   def initialize(search_term = "", base_path: TRY_PATH, initial_input: nil, test_render_once: false, test_no_cls: false, test_keys: nil, test_confirm: nil)
     @search_term = search_term.gsub(/\s+/, '-')
     @cursor_pos = 0  # Navigation cursor (list position)
-    @input_cursor_pos = 0  # Text cursor (position within search buffer)
     @scroll_offset = 0
-    @input_buffer = initial_input ? initial_input.gsub(/\s+/, '-') : @search_term
-    @input_cursor_pos = @input_buffer.length  # Start at end of buffer
+    @search = Tui::InputField.new(
+      placeholder: "",
+      text: initial_input ? initial_input.gsub(/\s+/, '-') : @search_term
+    )
     @selected = nil
     @all_trials = nil  # Memoized trials
     @base_path = base_path.to_s
@@ -155,9 +192,11 @@ class TrySelector
   private
 
   def setup_terminal
+    @terminal_restored = false
     unless @test_no_cls
       # Switch to alternate screen buffer (like vim, less, etc.)
       STDERR.print("#{Tui::ANSI::ALT_SCREEN_ON}#{Tui::ANSI.set_title("try")}#{Tui::ANSI::CURSOR_BLINK}")
+      TryCompat.mark_alt_screen(true)
     end
 
     # Spinel can SIGSEGV restoring a previous WINCH handler on process exit.
@@ -167,14 +206,18 @@ class TrySelector
   end
 
   def restore_terminal
+    return if @terminal_restored
+    @terminal_restored = true
     unless @test_no_cls
       STDERR.print(Tui::ANSI::RESET)
       STDERR.print(Tui::ANSI::CURSOR_DEFAULT)
       # Return to main screen buffer
       STDERR.print(Tui::ANSI::ALT_SCREEN_OFF)
+      TryCompat.mark_alt_screen(false)
     end
 
     Signal.trap('WINCH', @old_winch_handler) if @old_winch_handler
+    TryCompat.stdin_iflush
   end
 
   def load_all_tries
@@ -223,14 +266,14 @@ class TrySelector
 
   # Result wrapper to avoid Hash#merge allocation per entry
   TryEntry = Data.define(:data, :score, :highlight_positions) do
-    def [](key)
-      case key
-      when :score then score
-      when :highlight_positions then highlight_positions
-      else data[key]
-      end
-    end
-
+    def text; data[:text]; end
+    def basename; data[:basename]; end
+    def path; data[:path]; end
+    def is_new; data[:is_new]; end
+    def is_symlink; data[:is_symlink]; end
+    def ctime; data[:ctime]; end
+    def mtime; data[:mtime]; end
+    def base_score; data[:base_score]; end
   end
 
   def get_tries
@@ -238,15 +281,15 @@ class TrySelector
     @fuzzy ||= Fuzzy.new(@all_tries)
 
     # Cache results - only re-match when query changes
-    if @last_query == @input_buffer && @cached_results
+    if @last_query == @search.text && @cached_results
       return @cached_results
     end
 
-    @last_query = @input_buffer
+    @last_query = @search.text
     height = Tui::Terminal.size(STDERR)[0] || 24
     max_results = [height - 6, 3].max
     results = []
-    @fuzzy.match(@input_buffer).limit(max_results).each do |entry, positions, score|
+    @fuzzy.match(@search.text).limit(max_results).each do |entry, positions, score|
       results << TryEntry.new(entry, score, positions)
     end
     @cached_results = results
@@ -255,7 +298,7 @@ class TrySelector
   def main_loop
     loop do
       tries = get_tries
-      show_create_new = !@input_buffer.empty?
+      show_create_new = !@search.text.empty?
       total_items = tries.length + (show_create_new ? 1 : 0)
 
       # Ensure cursor is within bounds
@@ -266,6 +309,12 @@ class TrySelector
       key = read_key
       # nil means terminal resize - just re-render with new dimensions
       next unless key
+
+      before = @search.text
+      if @search.handle_key(key)
+        @cursor_pos = 0 if @search.text != before
+        next
+      end
 
       case key
       when "\r"  # Enter (carriage return)
@@ -285,35 +334,9 @@ class TrySelector
         @cursor_pos = [@cursor_pos - 1, 0].max
       when "\e[B", "\x0E"  # Down arrow or Ctrl-N
         @cursor_pos = [@cursor_pos + 1, total_items - 1].min
-      when "\e[C"  # Right arrow - ignore
-        # Do nothing
-      when "\e[D"  # Left arrow - ignore
-        # Do nothing
-      when "\x7F", "\b"  # Backspace (DEL and BS)
-        if @input_cursor_pos > 0
-          @input_buffer = @input_buffer[0...(@input_cursor_pos-1)] + @input_buffer[@input_cursor_pos..]
-          @input_cursor_pos -= 1
-        end
-        @cursor_pos = 0  # Reset list selection when typing
-      when "\x01"  # Ctrl-A - beginning of line
-        @input_cursor_pos = 0
-      when "\x05"  # Ctrl-E - end of line
-        @input_cursor_pos = @input_buffer.length
-      when "\x02"  # Ctrl-B - backward char
-        @input_cursor_pos = [@input_cursor_pos - 1, 0].max
-      when "\x06"  # Ctrl-F - forward char
-        @input_cursor_pos = [@input_cursor_pos + 1, @input_buffer.length].min
-      when "\x0B"  # Ctrl-K - kill to end of line
-        @input_buffer = @input_buffer[0...@input_cursor_pos]
-      when "\x17"  # Ctrl-W - delete word backward (alphanumeric)
-        if @input_cursor_pos > 0
-          new_pos = word_boundary_backward(@input_buffer, @input_cursor_pos)
-          @input_buffer = @input_buffer[0...new_pos] + @input_buffer[@input_cursor_pos..]
-          @input_cursor_pos = new_pos
-        end
       when "\x04"  # Ctrl-D - toggle mark for deletion
         if @cursor_pos < tries.length
-          path = tries[@cursor_pos][:path]
+          path = tries[@cursor_pos].path
           if @marked_for_deletion.include?(path)
             @marked_for_deletion.delete(path)
           else
@@ -347,14 +370,6 @@ class TrySelector
           @selected = { type: :cancel }
           break
         end
-      when String
-        # Only accept printable characters, not escape sequences.
-        # Guard ord first: Spinel can SIGSEGV on Regexp#match? with ESC/Ctrl chars.
-        if key.length == 1 && key.ord >= 32 && key.match?(INPUT_CHAR_RE)
-          @input_buffer = @input_buffer[0...@input_cursor_pos] + key + @input_buffer[@input_cursor_pos..]
-          @input_cursor_pos += 1
-          @cursor_pos = 0  # Reset list selection when typing
-        end
       end
     end
 
@@ -386,10 +401,30 @@ class TrySelector
 
     if input == "\e"
       begin
-        input << STDIN.read_nonblock(3)
-        input << STDIN.read_nonblock(2)
-      rescue IO::WaitReadable, EOFError
-        # No more escape sequence data available
+        nxt = STDIN.read_nonblock(1)
+        input << nxt
+        if nxt == "["
+          # CSI: consume until a final byte in 0x40-0x7E so mouse/unknown
+          # sequences never leak into the filter. Bare ESC still returns "\e"
+          # when no following byte is available (WaitReadable).
+          loop do
+            ch = STDIN.read_nonblock(1)
+            input << ch
+            code = ch.ord
+            break if code >= 0x40 && code <= 0x7E
+          end
+          # X10 mouse: ESC [ M + 3 payload bytes
+          if input == "\e[M"
+            begin
+              input << STDIN.read_nonblock(3)
+            rescue IO::WaitReadable, EOFError, Errno::EAGAIN, Errno::EWOULDBLOCK
+            end
+          end
+        elsif nxt == "O"
+          input << STDIN.read_nonblock(1)
+        end
+      rescue IO::WaitReadable, EOFError, Errno::EAGAIN, Errno::EWOULDBLOCK
+        # Standalone ESC (or incomplete sequence) — keep what we have
       end
     end
 
@@ -420,7 +455,7 @@ class TrySelector
     line = screen.header.add_line
       prefix = "Search: "
       line.write.write_dim(prefix)
-      line.write.write(screen.input("", value: @input_buffer, cursor: @input_cursor_pos).to_s)
+      line.write.write(screen.input("", value: @search.text, cursor: @search.cursor).to_s)
       line.mark_has_input(Tui::Metrics.visible_width(prefix))
     line = screen.header.add_line
     line.write.write_dim(fill("─")) 
@@ -445,7 +480,7 @@ class TrySelector
     header_lines = screen.header.lines.length
     footer_lines = screen.footer.lines.length
     max_visible = [height - header_lines - footer_lines, 3].max
-    show_create_new = !@input_buffer.empty?
+    show_create_new = !@search.text.empty?
     total_items = tries.length + (show_create_new ? 1 : 0)
 
     if @cursor_pos < @scroll_offset
@@ -472,7 +507,7 @@ class TrySelector
   end
 
   def render_entry_line(screen, entry, is_selected, width)
-    is_marked = @marked_for_deletion.include?(entry[:path])
+    is_marked = @marked_for_deletion.include?(entry.path)
     # Marked items keep the danger background; selected rows add a readable foreground.
     background = if is_marked
       Tui::Palette::DANGER_BG + (is_selected ? Tui::Palette::SELECTED_FG : "")
@@ -484,7 +519,7 @@ class TrySelector
     line.write.write((is_selected ? Tui::Text.highlight("→ ") + selected_foreground : "  "))
     icon = if is_marked
       emoji("🗑️")
-    elsif entry[:is_symlink]
+    elsif entry.is_symlink
       emoji("🔗")
     else
       emoji("📁")
@@ -493,7 +528,7 @@ class TrySelector
 
     plain_name, rendered_name = formatted_entry_name(entry, selected: is_selected)
     prefix_width = 5
-    meta_text = "#{format_relative_time(entry[:mtime])}, #{format('%.1f', entry[:score])}"
+    meta_text = "#{format_relative_time(entry.mtime)}, #{format('%.1f', entry.score)}"
 
     # Only truncate name if it exceeds total line width (not to make room for metadata)
     max_name_width = width - prefix_width - 1
@@ -516,17 +551,17 @@ class TrySelector
     line = screen.body.add_line(background)
     line.write.write((is_selected ? Tui::Text.highlight("→ ") + selected_foreground : "  "))
     date_prefix = Time.now.strftime("%Y-%m-%d")
-    label = if @input_buffer.empty?
+    label = if @search.text.empty?
       "📂 Create new: #{date_prefix}-"
     else
-      "📂 Create new: #{date_prefix}-#{@input_buffer}"
+      "📂 Create new: #{date_prefix}-#{@search.text}"
     end
     line.write.write(label)
   end
 
   def formatted_entry_name(entry, selected: false)
-    basename = entry[:basename]
-    positions = entry[:highlight_positions] || []
+    basename = entry.basename
+    positions = entry.highlight_positions || []
 
     if basename =~ /^(\d{4}-\d{2}-\d{2})-(.+)$/
       date_part = $1
@@ -579,10 +614,7 @@ class TrySelector
   # Find the position of the previous word boundary for Ctrl-W deletion.
   # Skips non-alphanumeric chars, then skips alphanumeric chars.
   def word_boundary_backward(buffer, cursor)
-    pos = cursor - 1
-    pos -= 1 while pos >= 0 && !buffer[pos].match?(WORD_CHAR_RE)
-    pos -= 1 while pos >= 0 && buffer[pos].match?(WORD_CHAR_RE)
-    pos + 1
+    Tui::InputField.new(placeholder: "", text: buffer.to_s, cursor: cursor).word_boundary_backward(buffer.to_s, cursor)
   end
 
   def format_relative_time(time)
@@ -634,18 +666,23 @@ class TrySelector
     @delete_mode = false
     @marked_for_deletion.clear
 
-    current_name = entry[:basename]
-    rename_buffer = current_name.dup
-    rename_cursor = rename_buffer.length
+    current_name = entry.basename
+    input = Tui::InputField.new(placeholder: "", text: current_name.dup)
     rename_error = nil
 
     loop do
-      render_rename_dialog(current_name, rename_buffer, rename_cursor, rename_error)
+      render_rename_dialog(current_name, input.text, input.cursor, rename_error)
 
       ch = read_key
+      next unless ch
+      before = input.text
+      if input.handle_key(ch)
+        rename_error = nil if input.text != before
+        next
+      end
       case ch
       when "\r"  # Enter - confirm
-        result = finalize_rename(entry, rename_buffer)
+        result = finalize_rename(entry, input.text)
         if result == true
           break
         else
@@ -653,36 +690,6 @@ class TrySelector
         end
       when "\x1b", "\x03"  # ESC or Ctrl-C - cancel
         break
-      when "\x7F", "\b"  # Backspace
-        if rename_cursor > 0
-          rename_buffer = rename_buffer[0...(rename_cursor - 1)] + rename_buffer[rename_cursor..].to_s
-          rename_cursor -= 1
-        end
-        rename_error = nil
-      when "\x01"  # Ctrl-A - start of line
-        rename_cursor = 0
-      when "\x05"  # Ctrl-E - end of line
-        rename_cursor = rename_buffer.length
-      when "\x02"  # Ctrl-B - back one char
-        rename_cursor = [rename_cursor - 1, 0].max
-      when "\x06"  # Ctrl-F - forward one char
-        rename_cursor = [rename_cursor + 1, rename_buffer.length].min
-      when "\x0B"  # Ctrl-K - kill to end
-        rename_buffer = rename_buffer[0...rename_cursor]
-        rename_error = nil
-      when "\x17"  # Ctrl-W - delete word backward
-        if rename_cursor > 0
-          new_pos = word_boundary_backward(rename_buffer, rename_cursor)
-          rename_buffer = rename_buffer[0...new_pos] + rename_buffer[rename_cursor..].to_s
-          rename_cursor = new_pos
-        end
-        rename_error = nil
-      when String
-        if ch.length == 1 && ch =~ /[a-zA-Z0-9\-_\.\s\/]/
-          rename_buffer = rename_buffer[0...rename_cursor] + ch + rename_buffer[rename_cursor..].to_s
-          rename_cursor += 1
-          rename_error = nil
-        end
       end
     end
 
@@ -731,7 +738,7 @@ class TrySelector
 
   def finalize_rename(entry, rename_buffer)
     new_name = rename_buffer.strip.gsub(/\s+/, '-')
-    old_name = entry[:basename]
+    old_name = entry.basename
 
     return "Name cannot be empty" if new_name.empty?
     return "Name cannot contain /" if new_name.include?('/')
@@ -747,7 +754,7 @@ class TrySelector
     @delete_mode = false
     @marked_for_deletion.clear
 
-    current_name = entry[:basename]
+    current_name = entry.basename
 
     # Strip date prefix for the default project name
     project_name = current_name.sub(/^\d{4}-\d{2}-\d{2}-/, '')
@@ -759,17 +766,22 @@ class TrySelector
       File.dirname(@base_path)
     end
 
-    ascend_buffer = File.join(projects_dir, project_name)
-    ascend_cursor = ascend_buffer.length
+    input = Tui::InputField.new(placeholder: "", text: File.join(projects_dir, project_name))
     ascend_error = nil
 
     loop do
-      render_ascend_dialog(current_name, ascend_buffer, ascend_cursor, ascend_error, projects_dir)
+      render_ascend_dialog(current_name, input.text, input.cursor, ascend_error, projects_dir)
 
       ch = read_key
+      next unless ch
+      before = input.text
+      if input.handle_key(ch)
+        ascend_error = nil if input.text != before
+        next
+      end
       case ch
       when "\r"  # Enter - confirm
-        result = finalize_ascend(entry, ascend_buffer)
+        result = finalize_ascend(entry, input.text)
         if result == true
           break
         else
@@ -777,36 +789,6 @@ class TrySelector
         end
       when "\x1b", "\x03"  # ESC or Ctrl-C - cancel
         break
-      when "\x7F", "\b"  # Backspace
-        if ascend_cursor > 0
-          ascend_buffer = ascend_buffer[0...(ascend_cursor - 1)] + ascend_buffer[ascend_cursor..].to_s
-          ascend_cursor -= 1
-        end
-        ascend_error = nil
-      when "\x01"  # Ctrl-A - start of line
-        ascend_cursor = 0
-      when "\x05"  # Ctrl-E - end of line
-        ascend_cursor = ascend_buffer.length
-      when "\x02"  # Ctrl-B - back one char
-        ascend_cursor = [ascend_cursor - 1, 0].max
-      when "\x06"  # Ctrl-F - forward one char
-        ascend_cursor = [ascend_cursor + 1, ascend_buffer.length].min
-      when "\x0B"  # Ctrl-K - kill to end
-        ascend_buffer = ascend_buffer[0...ascend_cursor]
-        ascend_error = nil
-      when "\x17"  # Ctrl-W - delete word backward
-        if ascend_cursor > 0
-          new_pos = word_boundary_backward(ascend_buffer, ascend_cursor)
-          ascend_buffer = ascend_buffer[0...new_pos] + ascend_buffer[ascend_cursor..].to_s
-          ascend_cursor = new_pos
-        end
-        ascend_error = nil
-      when String
-        if ch.length == 1 && ch =~ /[a-zA-Z0-9\-_\.\s\/~]/
-          ascend_buffer = ascend_buffer[0...ascend_cursor] + ch + ascend_buffer[ascend_cursor..].to_s
-          ascend_cursor += 1
-          ascend_error = nil
-        end
       end
     end
 
@@ -869,9 +851,9 @@ class TrySelector
 
     @selected = {
       type: :ascend,
-      source: entry[:path],
+      source: entry.path,
       dest: dest,
-      basename: entry[:basename],
+      basename: entry.basename,
       base_path: @base_path
     }
     true
@@ -879,7 +861,7 @@ class TrySelector
 
   def handle_selection(try_dir)
     # Select existing try directory
-    @selected = { type: :cd, path: try_dir[:path] }
+    @selected = { type: :cd, path: try_dir.path }
   end
 
   def handle_create_new
@@ -887,8 +869,8 @@ class TrySelector
     date_prefix = Time.now.strftime("%Y-%m-%d")
 
     # If user already typed a name, use it directly
-    if !@input_buffer.empty?
-      final_name = "#{date_prefix}-#{@input_buffer}".gsub(/\s+/, '-')
+    if !@search.text.empty?
+      final_name = "#{date_prefix}-#{@search.text}".gsub(/\s+/, '-')
       full_path = File.join(@base_path, final_name)
       @selected = { type: :mkdir, path: full_path }
     else
@@ -921,21 +903,19 @@ class TrySelector
 
   def confirm_batch_delete(tries)
     # Find marked items with their info
-    marked_items = tries.select { |t| @marked_for_deletion.include?(t[:path]) }
+    marked_items = tries.select { |t| @marked_for_deletion.include?(t.path) }
     return if marked_items.empty?
 
-    confirmation_buffer = String.new
-    confirmation_cursor = 0
+    input = Tui::InputField.new(placeholder: "", text: "")
 
     # Handle test mode
     if @test_keys && !@test_keys.empty?
       while @test_keys && !@test_keys.empty?
         ch = @test_keys.shift
         break if ch == "\r" || ch == "\n"
-        confirmation_buffer << ch
-        confirmation_cursor = confirmation_buffer.length
+        input.handle_key(ch)
       end
-      process_delete_confirmation(marked_items, confirmation_buffer)
+      process_delete_confirmation(marked_items, input.text)
       return
     elsif @test_confirm || !STDERR.tty?
       confirmation_buffer = (@test_confirm || STDIN.gets)&.chomp.to_s
@@ -947,33 +927,22 @@ class TrySelector
     # Clear screen once before dialog to ensure clean slate
     clear_screen unless @test_no_cls
     loop do
-      render_delete_dialog(marked_items, confirmation_buffer, confirmation_cursor)
+      render_delete_dialog(marked_items, input.text, input.cursor)
 
       ch = read_key
+      next unless ch
+      if input.handle_key(ch)
+        next
+      end
       case ch
       when "\r"  # Enter - confirm
-        process_delete_confirmation(marked_items, confirmation_buffer)
+        process_delete_confirmation(marked_items, input.text)
         break
-      when "\x1b"  # Escape - cancel
+      when "\x1b", "\x03"  # Escape or Ctrl-C - cancel
         @delete_status = "Delete cancelled"
         @marked_for_deletion.clear
         @delete_mode = false
         break
-      when "\x7F", "\b"  # Backspace
-        if confirmation_cursor > 0
-          confirmation_buffer = confirmation_buffer[0...confirmation_cursor-1] + confirmation_buffer[confirmation_cursor..]
-          confirmation_cursor -= 1
-        end
-      when "\x03"  # Ctrl-C
-        @delete_status = "Delete cancelled"
-        @marked_for_deletion.clear
-        @delete_mode = false
-        break
-      when String
-        if ch.length == 1 && ch.ord >= 32
-          confirmation_buffer = confirmation_buffer[0...confirmation_cursor] + ch + confirmation_buffer[confirmation_cursor..]
-          confirmation_cursor += 1
-        end
       end
     end
 
@@ -991,7 +960,7 @@ class TrySelector
 
     marked_items.each do |item|
       line = screen.body.add_line(Tui::Palette::DANGER_BG)
-        line.write.write(emoji("🗑️")).write(" #{item[:basename]}")
+        line.write.write(emoji("🗑️")).write(" #{item.basename}")
     end
 
     # Add empty lines, then centered confirmation prompt
@@ -1025,11 +994,11 @@ class TrySelector
         # Validate all paths first
         validated_paths = []
         marked_items.each do |item|
-          target_real = File.realpath(item[:path])
+          target_real = File.realpath(item.path)
           unless target_real.start_with?(base_real + "/")
             raise "Safety check failed: #{target_real} is not inside #{base_real}"
           end
-          validated_paths << { path: target_real, basename: item[:basename] }
+          validated_paths << { path: target_real, basename: item.basename }
         end
 
         # Return delete action with all paths
@@ -1262,7 +1231,9 @@ if $0 == __FILE__ || TryCompat.compiled_binary?
         when 'CTRL-P', 'CTRLP' then keys << "\x10"
         when 'CTRL-R', 'CTRLR' then keys << "\x12"
         when 'CTRL-T', 'CTRLT' then keys << "\x14"
+        when 'CTRL-U', 'CTRLU' then keys << "\x15"
         when 'CTRL-W', 'CTRLW' then keys << "\x17"
+        when 'DELETE' then keys << "\e[3~"
         when /^TYPE=/i
           tok.sub(/^TYPE=/i, '').each_char { |ch| keys << ch }
         else

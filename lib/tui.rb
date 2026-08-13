@@ -811,13 +811,140 @@ module Tui
   end
 
   class InputField
-    attr_accessor :text, :cursor
-    attr_reader :placeholder
+    attr_reader :placeholder, :text, :cursor
 
-    def initialize(placeholder:, text:, cursor: nil)
+    def initialize(placeholder: "", text: "", cursor: nil)
       @placeholder = placeholder
       @text = text.to_s.dup
-      @cursor = cursor.nil? ? @text.length : [[cursor, 0].max, @text.length].min
+      @cursor = cursor.nil? ? @text.length : cursor.to_i
+      clamp_cursor!
+    end
+
+    def text=(value)
+      @text = value.to_s.dup
+      clamp_cursor!
+    end
+
+    def cursor=(pos)
+      @cursor = pos.to_i
+      clamp_cursor!
+    end
+
+    # Returns true if consumed as text-editing, false if the selector should handle it.
+    def handle_key(key)
+      return false if key.nil? || key.empty?
+
+      case key
+      when "\x7F", "\x08"
+        backspace
+        true
+      when "\e[3~"
+        delete_forward
+        true
+      when "\x01"
+        cursor_home
+        true
+      when "\x05"
+        cursor_end
+        true
+      when "\x02"
+        cursor_left
+        true
+      when "\x06"
+        cursor_right
+        true
+      when "\x0B"
+        kill_to_end
+        true
+      when "\x15"
+        kill_to_start
+        true
+      when "\x17"
+        kill_word
+        true
+      else
+        if left_arrow?(key)
+          cursor_left
+          true
+        elsif right_arrow?(key)
+          cursor_right
+          true
+        elsif home_key?(key)
+          cursor_home
+          true
+        elsif end_key?(key)
+          cursor_end
+          true
+        elsif key.length == 1
+          code = key.ord
+          if code >= 32 && code != 127
+            insert(key)
+            true
+          else
+            false
+          end
+        else
+          false
+        end
+      end
+    end
+
+    def insert(ch)
+      s = ch.to_s
+      return if s.empty?
+      @text = @text[0...@cursor].to_s + s + @text[@cursor..].to_s
+      @cursor += 1
+    end
+
+    def backspace
+      return if @cursor <= 0
+      @text = @text[0...(@cursor - 1)].to_s + @text[@cursor..].to_s
+      @cursor -= 1
+    end
+
+    def delete_forward
+      return if @cursor >= @text.length
+      @text = @text[0...@cursor].to_s + @text[(@cursor + 1)..].to_s
+    end
+
+    def kill_to_end
+      @text = @text[0...@cursor].to_s
+    end
+
+    def kill_to_start
+      @text = @text[@cursor..].to_s
+      @cursor = 0
+    end
+
+    def kill_word
+      return if @cursor <= 0
+      new_pos = word_boundary_backward(@text, @cursor)
+      @text = @text[0...new_pos].to_s + @text[@cursor..].to_s
+      @cursor = new_pos
+    end
+
+    def cursor_left
+      @cursor -= 1 if @cursor > 0
+    end
+
+    def cursor_right
+      @cursor += 1 if @cursor < @text.length
+    end
+
+    def cursor_home
+      @cursor = 0
+    end
+
+    def cursor_end
+      @cursor = @text.length
+    end
+
+    # Alphanumeric word boundary (Ctrl-W). Skips separators, then the word.
+    def word_boundary_backward(buffer, cursor)
+      pos = cursor - 1
+      pos -= 1 while pos >= 0 && !alnum_char?(buffer[pos])
+      pos -= 1 while pos >= 0 && alnum_char?(buffer[pos])
+      pos + 1
     end
 
     def to_s
@@ -841,5 +968,36 @@ module Tui
     def render_placeholder
       Text.dim(placeholder)
     end
+
+    def clamp_cursor!
+      @cursor = 0 if @cursor < 0
+      @cursor = @text.length if @cursor > @text.length
+    end
+
+    # Avoid Regexp#match? on control bytes (Spinel can SIGSEGV).
+    def alnum_char?(ch)
+      return false if ch.nil? || ch.empty?
+      c = ch.ord
+      (c >= 48 && c <= 57) || (c >= 65 && c <= 90) || (c >= 97 && c <= 122)
+    end
+
+    def left_arrow?(key)
+      return true if key == "\e[D" || key == "\eOD"
+      key.start_with?("\e[") && key.end_with?("D") && key.length > 3
+    end
+
+    def right_arrow?(key)
+      return true if key == "\e[C" || key == "\eOC"
+      key.start_with?("\e[") && key.end_with?("C") && key.length > 3
+    end
+
+    def home_key?(key)
+      key == "\e[H" || key == "\e[1~" || key == "\e[7~" || key == "\eOH"
+    end
+
+    def end_key?(key)
+      key == "\e[F" || key == "\e[4~" || key == "\e[8~" || key == "\eOF"
+    end
   end
+
 end
