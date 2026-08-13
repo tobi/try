@@ -119,14 +119,16 @@ i: install ## Shortcut for install
 
 # Native binary via Spinel (optional)
 SPINEL ?= spinel
-NATIVE  = dist/try
+SPINEL_FLAGS ?= -O s
+NATIVE = dist/try
 
 .PHONY: native native-test
 native: $(NATIVE)
 
 $(NATIVE): try.rb lib/tui.rb lib/fuzzy.rb
 	mkdir -p dist
-	$(SPINEL) try.rb -o $(NATIVE)
+	$(SPINEL) $(SPINEL_FLAGS) try.rb -o $(NATIVE)
+	strip $(NATIVE)
 
 native-test: $(NATIVE)
 	bash spec/tests/runner.sh $(NATIVE)

@@ -61,7 +61,7 @@ echo '~/.local/try.rb init ~/src/tries | source' >> ~/.config/fish/config.fish
 Compile a native `try` with [Spinel](https://github.com/matz/spinel). Build Spinel from source; [PR 3906](https://github.com/matz/spinel/pull/3906) is required so `IO#tty?` / `#winsize` work on handles that are not statically typed IO.
 
 ```bash
-make native SPINEL=/path/to/spinel
+make native SPINEL=/path/to/spinel   # -O s, then strip
 ./dist/try --help
 eval "$(./dist/try init)"   # wires the shell function to the binary, not MRI
 make native-test SPINEL=/path/to/spinel
