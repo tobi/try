@@ -110,6 +110,28 @@ try . <name>              # Shorthand (requires name)
 - Returns shell script to cd into worktree
 - `try .` without a name is NOT supported (too easy to invoke accidentally)
 
+### migrate
+
+Move an existing experiment directory into the tries directory.
+
+```
+try migrate [dir]
+try exec migrate [dir]
+```
+
+**Arguments:**
+- `dir` (optional): Directory to migrate, relative to cwd. Defaults to the current working directory.
+
+**Behavior:**
+- Opens a confirmation dialog showing the source, the destination (tries directory), and an editable target name
+- Default target name is `YYYY-MM-DD-<name>`; a name that already has a date prefix is kept as-is
+- Collision-safe: if the default target already exists, the versioning suffix (`-2`, `-3`, ...) is appended
+- Worktrees (directory with a `.git` file) are moved with `git worktree move`; all other directories with `mv`
+- Shows a warning when the source is inside a git repository but is not the repository root (moving it cuts it off from git history)
+- Refuses to migrate the tries directory itself or any directory already inside it
+- Returns a shell script that moves the directory and cds into it
+- Pressing Esc cancels (exit code 1)
+
 ### init
 
 Output shell function definition for shell integration.

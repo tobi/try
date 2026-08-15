@@ -143,6 +143,7 @@ try new api                                  # Start with "2025-08-17-new-api"
 try . [name]                                   # Create a dated worktree dir for current repo
 try ./path/to/repo [name]                      # Use another repo as the worktree source
 try worktree dir [name]                        # Same as above, explicit CLI form
+try migrate [dir]                              # Move an existing dir into tries
 try clone https://github.com/user/repo.git  # Clone repo into date-prefixed directory
 try https://github.com/user/repo.git        # Shorthand for clone (same as above)
 try --help                                   # See all options
