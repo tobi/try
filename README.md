@@ -24,12 +24,17 @@ Instantly navigate through all your experiment directories with:
 
 ## Installation
 
-### RubyGems (Recommended)
+### Recommended (RubyGems)
 
 ```bash
 gem install try-cli
 ```
 
+### Alternative Installations (Homebrew)
+
+```bash
+brew install try
+```
 Then add to your shell:
 
 ```bash
