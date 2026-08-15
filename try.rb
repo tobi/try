@@ -845,6 +845,98 @@ class TrySelector
     true
   end
 
+  # Migrate dialog - move a directory into the tries root
+  def run_migrate_dialog(source, default_target, warn_note)
+    setup_terminal
+    target = nil
+    TryCompat.with_raw_tty do
+      input = Tui::InputField.new(placeholder: "", text: default_target)
+      migrate_error = nil
+
+      loop do
+        render_migrate_dialog(source, input.text, input.cursor, migrate_error, warn_note)
+
+        ch = read_key
+        next unless ch
+        before = input.text
+        if input.handle_key(ch)
+          migrate_error = nil if input.text != before
+          next
+        end
+        case ch
+        when "\r"  # Enter - confirm
+          result = finalize_migrate(input.text)
+          if result == true
+            target = input.text.strip.gsub(/\s+/, '-')
+            break
+          else
+            migrate_error = result  # Error message string
+          end
+        when "\x1b", "\x03"  # ESC or Ctrl-C - cancel
+          break
+        end
+      end
+    end
+    target
+  ensure
+    restore_terminal
+  end
+  public :run_migrate_dialog
+
+  def render_migrate_dialog(source, target_buffer, target_cursor, migrate_error, warn_note)
+    screen = Tui::Screen.new(io: STDERR)
+
+    line = screen.header.add_line
+      line.center.write(emoji("🚚")).write(Tui::Text.accent("  Migrate directory"))
+    line = screen.header.add_line
+    line.write.write_dim(fill("─"))
+
+    line = screen.body.add_line
+      line.write.write(emoji("📁")).write(" #{source}")
+    screen.body.add_line
+
+    line = screen.body.add_line
+      line.center.write_dim("Destination: #{@base_path}")
+    screen.body.add_line
+    screen.body.add_line
+    line = screen.body.add_line
+      prefix = "New name: "
+      line.center.write_dim(prefix)
+      line.center.write(screen.input("", value: target_buffer, cursor: target_cursor).to_s)
+      input_width = [target_buffer.length, target_cursor + 1].max
+      prefix_width = Tui::Metrics.visible_width(prefix)
+      max_content = screen.width - 1
+      center_start = (max_content - prefix_width - input_width) / 2
+      line.mark_has_input(center_start + prefix_width)
+
+    if warn_note
+      screen.body.add_line
+      line = screen.body.add_line
+      line.center.write_bold("⚠ #{warn_note}")
+    end
+
+    if migrate_error
+      screen.body.add_line
+      line = screen.body.add_line
+      line.center.write_bold(migrate_error)
+    end
+
+    line = screen.footer.add_line
+    line.write.write_dim(fill("─"))
+    line = screen.footer.add_line
+    line.center.write_dim("Enter: Confirm  Esc: Cancel")
+
+    screen.flush
+  end
+
+  def finalize_migrate(target_buffer)
+    new_name = target_buffer.strip.gsub(/\s+/, '-')
+    return "Name cannot be empty" if new_name.empty?
+    return "Name cannot contain /" if new_name.include?('/')
+    return "Directory exists: #{new_name}" if Dir.exist?(File.join(@base_path, new_name))
+    true
+  end
+
   def handle_selection(try_dir)
     # Select existing try directory
     @selected = { type: :cd, path: try_dir.path }
@@ -1032,12 +1124,14 @@ if $0 == __FILE__ || TryCompat.compiled_binary?
         try [query]           Interactive directory selector
         try clone <url>       Clone repo into dated directory
         try worktree <name>   Create worktree from current git repo
+        try migrate [dir]     Move an existing directory into tries
         try --help            Show this help
 
       Commands:
         init [path]           Output shell function definition
         clone <url> [name]    Clone git repo into date-prefixed directory
         worktree <name>       Create worktree in dated directory
+        migrate [dir]         Move existing directory into date-prefixed tries dir
 
       Examples:
         try                   Open interactive selector
@@ -1492,6 +1586,77 @@ if $0 == __FILE__ || TryCompat.compiled_binary?
     end
   end
 
+  # Returns :worktree (own .git file), :repo (own .git dir), :inside_repo
+  # (an ancestor has .git), or nil for a plain directory.
+  def git_context(dir)
+    git = File.join(dir, '.git')
+    return :worktree if File.file?(git)
+    return :repo if File.directory?(git)
+    cur = File.dirname(dir)
+    loop do
+      g = File.join(cur, '.git')
+      return :inside_repo if File.file?(g) || File.directory?(g)
+      parent = File.dirname(cur)
+      break if parent == cur
+      cur = parent
+    end
+    nil
+  end
+
+  def cmd_migrate!(args, tries_path, and_keys)
+    dir_arg = args.shift
+    source = dir_arg ? File.expand_path(dir_arg) : Dir.pwd
+
+    begin
+      src = File.realpath(source)
+    rescue Errno::ENOENT, Errno::EACCES
+      src = nil
+    end
+    unless src && Dir.exist?(src)
+      warn "Error: No such directory: #{source}"
+      warn "Usage: try migrate [dir]"
+      exit 1
+    end
+
+    TryCompat.mkdir_p(tries_path)
+    tries_real = File.realpath(tries_path)
+    if src == tries_real
+      warn "Error: Refusing to migrate the tries directory itself"
+      exit 1
+    end
+    if src.start_with?(tries_real + "/")
+      warn "Error: Already inside the tries directory: #{src}"
+      exit 1
+    end
+
+    if (!STDIN.tty? || !STDERR.tty?) && (and_keys.nil? || and_keys.empty?)
+      warn "Error: try migrate requires an interactive terminal"
+      exit 1
+    end
+
+    date_prefix = Time.now.strftime("%Y-%m-%d")
+    base = File.basename(src)
+    if base.match?(/\A\d{4}-\d{2}-\d{2}-.+\z/)
+      stem = base[11..-1]
+      resolved = resolve_unique_name_with_versioning(tries_path, base[0, 10], stem)
+      default_target = "#{base[0, 10]}-#{resolved}"
+    else
+      resolved = resolve_unique_name_with_versioning(tries_path, date_prefix, base)
+      default_target = "#{date_prefix}-#{resolved}"
+    end
+
+    ctx = git_context(src)
+    warn_note = "inside a git repository; moving it will cut it off from git history" if ctx == :inside_repo
+
+    selector = TrySelector.new("", base_path: tries_path,
+      test_keys: and_keys, test_no_cls: !!(and_keys && !and_keys.empty?))
+    target = selector.run_migrate_dialog(src, default_target, warn_note)
+    return nil unless target
+
+    dest = File.join(tries_path, target)
+    script_migrate(src, dest, ctx == :worktree)
+  end
+
   # --- Shell script helpers ---
   SCRIPT_WARNING = "# if you can read this, you didn't launch try from an alias. run try --help."
 
@@ -1597,6 +1762,16 @@ if $0 == __FILE__ || TryCompat.compiled_binary?
     cmds + script_cd(dest)
   end
 
+  def script_migrate(src, dest, is_worktree)
+    cmds = []
+    if is_worktree
+      cmds << "git worktree move #{q(src)} #{q(dest)}"
+    else
+      cmds << "mv #{q(src)} #{q(dest)}"
+    end
+    cmds + script_cd(dest)
+  end
+
   def script_rename(base_path, old_name, new_name)
     new_path = File.join(base_path, new_name)
     [
@@ -1671,6 +1846,15 @@ if $0 == __FILE__ || TryCompat.compiled_binary?
   when 'clone'
     emit_script(cmd_clone!(ARGV, tries_path))
     exit 0
+  when 'migrate'
+    script = cmd_migrate!(ARGV, tries_path, and_keys)
+    if script
+      emit_script(script)
+      exit 0
+    else
+      puts "Cancelled."
+      exit 1
+    end
   when 'init'
     cmd_init!(ARGV, tries_path)
     exit 0
@@ -1683,6 +1867,16 @@ if $0 == __FILE__ || TryCompat.compiled_binary?
     when 'clone'
       ARGV.shift
       emit_script(cmd_clone!(ARGV, tries_path))
+    when 'migrate'
+      ARGV.shift
+      script = cmd_migrate!(ARGV, tries_path, and_keys)
+      if script
+        emit_script(script)
+        exit 0
+      else
+        puts "Cancelled."
+        exit 1
+      end
     when 'worktree'
       ARGV.shift
       repo = ARGV.shift
