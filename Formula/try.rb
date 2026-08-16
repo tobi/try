@@ -9,11 +9,9 @@ class Try < Formula
   depends_on "ruby"
 
   def install
-    bin.install "try.rb" => "try"
-    if build.head?
-      (bin/"lib").install "lib/tui.rb"
-      (bin/"lib").install "lib/fuzzy.rb"
-    end
+    system "make", "dist"
+    bin.install "bin/try"
+    (prefix/"dist").install "dist/try.rb"
   end
 
   def caveats

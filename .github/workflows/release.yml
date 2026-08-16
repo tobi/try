@@ -26,7 +26,9 @@ jobs:
         run: rake
 
       - name: Build gem
-        run: gem build try-cli.gemspec
+        run: |
+          make dist
+          gem build try-cli.gemspec
 
       - name: Configure trusted publishing credentials
         uses: rubygems/configure-rubygems-credentials@main
