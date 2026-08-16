@@ -1,5 +1,9 @@
 #!/usr/bin/env ruby
-# frozen_string_literal: true
-
-$0 = File.expand_path('../try.rb', __dir__)
-load $0
+root = File.expand_path('..', __dir__)
+native = File.join(root, 'dist', 'try')
+script = File.join(root, 'dist', 'try.rb')
+if File.file?(native) && File.executable?(native)
+  exec native, *ARGV
+end
+abort "try: missing #{script} (run: make dist)" unless File.file?(script)
+load script

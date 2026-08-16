@@ -72,10 +72,11 @@
           nativeBuildInputs = [ pkgs.makeBinaryWrapper ];
 
           installPhase = ''
-            mkdir -p $out/bin
-            cp try.rb $out/bin/try
-            cp -r lib $out/bin/
-            chmod +x $out/bin/try
+            make SHELL=bash dist
+            mkdir -p $out/bin $out/dist
+            cp bin/try $out/bin/try
+            cp dist/try.rb $out/dist/try.rb
+            chmod +x $out/bin/try $out/dist/try.rb
 
             wrapProgram $out/bin/try \
               --prefix PATH : ${ruby}/bin

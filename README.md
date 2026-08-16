@@ -20,7 +20,7 @@ Instantly navigate through all your experiment directories with:
 - **Fuzzy search** that just works
 - **Smart sorting** - recently used stuff bubbles to the top
 - **Auto-dating** - creates directories like `2025-08-17-redis-experiment`
-- **Zero config** - just one Ruby file, no dependencies
+- **Zero config** - no runtime gem dependencies
 
 ## Installation
 
@@ -29,6 +29,8 @@ Instantly navigate through all your experiment directories with:
 ```bash
 gem install try-cli
 ```
+
+The gem ships `bin/try` plus a single generated `dist/try.rb` (`make dist` concatenates `lib/tui.rb`, `lib/fuzzy.rb`, and `try.rb`). `bin/try` loads that script, or execs `dist/try` when a Spinel native build is present.
 
 Then add to your shell:
 
@@ -42,32 +44,39 @@ try init | source
 
 ### Quick Start (Manual)
 
+Edit the split sources (`try.rb`, `lib/tui.rb`, `lib/fuzzy.rb`), then build the single-file script:
+
 ```bash
-curl -sL https://raw.githubusercontent.com/tobi/try/refs/heads/main/try.rb > ~/.local/try.rb
+git clone https://github.com/tobi/try.git
+cd try
+make dist          # writes dist/try.rb
+# optional: make native   # writes dist/try (Spinel)
 
-# Make "try" executable so it can be run directly
-chmod +x ~/.local/try.rb
-
+# bin/try routes to dist/try when present, otherwise dist/try.rb
+chmod +x bin/try
 # Add to your shell (bash/zsh)
-echo 'eval "$(ruby ~/.local/try.rb init ~/src/tries)"' >> ~/.zshrc
+echo 'eval "$(./bin/try init ~/src/tries)"' >> ~/.zshrc
 
 # for fish shell users
-echo '~/.local/try.rb init ~/src/tries | source' >> ~/.config/fish/config.fish
+echo './bin/try init ~/src/tries | source' >> ~/.config/fish/config.fish
 ```
+
+Or run `dist/try.rb` directly after `make dist`.
 
 
 ### Native binary (optional)
 
-Compile a native `try` with [Spinel](https://github.com/matz/spinel). Build Spinel from source; [PR 3906](https://github.com/matz/spinel/pull/3906) is required so `IO#tty?` / `#winsize` work on handles that are not statically typed IO.
+Compile a native `try` with [Spinel](https://github.com/matz/spinel). `make native` compiles the concatenated `dist/try.rb` (one compilation unit), not the split sources. Build Spinel from source; [PR 3906](https://github.com/matz/spinel/pull/3906) is required so `IO#tty?` / `#winsize` work on handles that are not statically typed IO.
 
 ```bash
-make native SPINEL=/path/to/spinel   # -O s, then strip
+make dist
+make native SPINEL=/path/to/spinel   # compiles dist/try.rb, then strip
 ./dist/try --help
-eval "$(./dist/try init)"   # wires the shell function to the binary, not MRI
+eval "$(./bin/try init)"   # bin/try execs dist/try when present
 make native-test SPINEL=/path/to/spinel
 ```
 
-MRI `ruby try.rb` and the gem keep working. `dist/try init` emits the binary path; `ruby try.rb init` still emits `/usr/bin/env ruby '…/try.rb'`.
+MRI `ruby try.rb` (dev), `dist/try.rb`, and the gem keep working. `bin/try` picks `dist/try` when that executable exists, otherwise `dist/try.rb`. The published gem does not include a Linux ELF `dist/try`.
 
 ## The Problem
 
@@ -263,10 +272,10 @@ After installation, add to your shell:
 
 ## Why Ruby?
 
-- One file, no dependencies
+- Small codebase, no runtime gem dependencies
 - Works on any system with Ruby (macOS has it built-in)
 - Fast enough for thousands of directories
-- Easy to hack on
+- Easy to hack on — edit `try.rb` / `lib/`, then `make dist`
 
 ## The Philosophy
 
@@ -290,7 +299,7 @@ A: First, welcome to the club. Second, it handles it fine - the scoring algorith
 
 ## Contributing
 
-It's one file. If you want to change something, just edit it. Send a PR if you think others would like it too.
+Edit `try.rb`, `lib/tui.rb`, and `lib/fuzzy.rb` (those stay the source of truth). `make dist` concatenates them into `dist/try.rb`. Send a PR if you think others would like it too.
 
 ## License
 

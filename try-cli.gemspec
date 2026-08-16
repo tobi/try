@@ -17,15 +17,21 @@ Gem::Specification.new do |spec|
   spec.metadata["documentation_uri"] = "https://pages.tobi.lutke.com/try/"
   spec.metadata["changelog_uri"] = "https://github.com/tobi/try/releases"
 
-  spec.files = Dir[
-    "lib/**/*",
-    "bin/*",
-    "try.rb",
-    "VERSION",
-    "LICENSE*",
-    "README.md"
-  ]
+  # Generate the single-file script at build time. VERSION is read above from
+  # the repo; it is not shipped inside the installed gem.
+  Dir.chdir(__dir__) do
+    system("make", "dist/try.rb") or raise "failed to generate dist/try.rb (make dist)"
+  end
+
+  files = ["bin/try", "dist/try.rb"]
+  files << "LICENSE" if File.file?(File.expand_path("LICENSE", __dir__))
+  # Local `make native && gem build` may include the AOT binary. Release CI
+  # must not run `make native`, so the published gem stays portable Ruby.
+  native = File.expand_path("dist/try", __dir__)
+  files << "dist/try" if File.file?(native) && File.executable?(native)
+
+  spec.files         = files
   spec.bindir        = "bin"
   spec.executables   = ["try"]
-  spec.require_paths = ["lib", "."]
+  spec.require_paths = ["dist"]
 end
