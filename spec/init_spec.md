@@ -89,6 +89,14 @@ The wrapper interprets `try exec` exit codes:
 | 0 | Success | `eval` the output (execute shell commands) |
 | 1 | Cancelled/Error | Print the output (show message to user) |
 
+## Re-sourcing Safety
+
+The shell wrapper shadows the `try` binary. When a shell config is sourced
+again (`source ~/.zshrc`), `try init` must dispatch to the init logic through
+the wrapper and re-emit the function definition — never fall through to the
+interactive selector. `try exec init [PATH]` must therefore behave like
+`try init [PATH]`.
+
 ## Testing
 
 Test that init produces valid shell syntax:

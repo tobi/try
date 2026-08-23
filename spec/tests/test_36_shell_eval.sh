@@ -32,6 +32,17 @@ else
     fail "bash try exec should produce script with directory" "2025-01-01-hello" "$bash_out" "init_spec.md"
 fi
 
+# Test: `try exec init PATH` re-emits the wrapper with the new path.
+# The shell wrapper shadows the binary, so a re-source (`source ~/.zshrc`)
+# routes `try init` through `exec`; it must dispatch to init, not the selector.
+mkdir -p "$EVAL_DIR/other"
+bash_out=$("$TRY_BIN_PATH" exec --path "$EVAL_DIR" init "$EVAL_DIR/other" 2>/dev/null)
+if echo "$bash_out" | grep -qF -- "--path '$EVAL_DIR/other'"; then
+    pass
+else
+    fail "bash exec init should re-emit wrapper with new path" "--path '$EVAL_DIR/other'" "$bash_out" "init_spec.md"
+fi
+
 # --- zsh ---
 
 if command -v zsh >/dev/null 2>&1; then
@@ -55,6 +66,14 @@ if command -v zsh >/dev/null 2>&1; then
         pass
     else
         fail "zsh try exec should produce script with directory" "2025-01-01-hello" "$zsh_out" "init_spec.md"
+    fi
+
+    # Test: zsh exec init re-emits wrapper with new path (re-source safe)
+    zsh_out=$("$TRY_BIN_PATH" exec --path "$EVAL_DIR" init "$EVAL_DIR/other" 2>/dev/null)
+    if echo "$zsh_out" | grep -qF -- "--path '$EVAL_DIR/other'"; then
+        pass
+    else
+        fail "zsh exec init should re-emit wrapper with new path" "--path '$EVAL_DIR/other'" "$zsh_out" "init_spec.md"
     fi
 else
     pass  # skip
