@@ -1683,6 +1683,12 @@ if $0 == __FILE__ || TryCompat.compiled_binary?
     when 'clone'
       ARGV.shift
       emit_script(cmd_clone!(ARGV, tries_path))
+    when 'init'
+      # Re-sourcing support: the shell wrapper shadows the binary, so a
+      # second `try init` (e.g. from `source ~/.zshrc`) must re-emit the
+      # wrapper instead of falling through to the interactive selector.
+      ARGV.shift
+      cmd_init!(ARGV, tries_path)
     when 'worktree'
       ARGV.shift
       repo = ARGV.shift
