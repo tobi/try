@@ -39,6 +39,7 @@ try exec [query]        # equivalent to: try exec cd [query]
 - Opens interactive TUI for directory selection
 - Filters directories by query if provided
 - Returns shell script to cd into selected directory
+- In Herdr or cmux, also emits a best-effort command to show `try: <name>`; Herdr uses the current panel's subtitle metadata and cmux renames the current tab; the date prefix is removed
 
 **Actions:**
 - Select existing directory → touch and cd
@@ -62,6 +63,7 @@ try <url> [name]            # URL shorthand (same as clone)
 **Behavior:**
 - Creates directory named `YYYY-MM-DD-<user>-<repo>` (extracted from URL)
 - Clones repository into that directory
+- For a GitHub pull request URL (`https://github.com/user/repo/pull/123`), clones the repository, fetches `pull/123/head`, and checks out the PR in detached HEAD state
 - Returns shell script to cd into cloned directory
 
 **Examples:**
@@ -75,8 +77,18 @@ try clone https://github.com/user/repo myproject
 try https://github.com/tobi/try.git
 # URL shorthand (same as first example)
 
+try https://github.com/tobi/try/pull/124
+# Clones the repository and checks out PR 124
+# Creates: 2025-11-30-tobi-try
+
 try clone git@github.com:tobi/try.git
 # SSH URL also works: 2025-11-30-tobi-try
+
+try clone ssh://git@yourgitserver:port/user/repo.git
+# SSH URL with custom port also works: 2025-11-30-user-repo
+
+try clone deploy@git.example.com:src/team/project.git
+# SCP-style SSH URLs with nested paths also work: 2025-11-30-deploy-project
 ```
 
 ### worktree
@@ -204,6 +216,8 @@ All exec mode commands output shell scripts with each command on its own line:
 
 Commands are chained with `&& \` for readability, with 2-space indent on continuation lines. The warning comment helps users who accidentally run `try exec` directly.
 
+When `HERDR_ENV=1` and `HERDR_PANE_ID` are present, the script includes a guarded `herdr pane report-metadata --title` command to set the current panel subtitle. If the pane ID ends in `:p1`, it also renames the workspace using `HERDR_WORKSPACE_ID`. When `CMUX_SOCKET_PATH` or `CMUX_BUNDLE_ID` is present, it includes a guarded `cmux rename-tab` command. Each optional command checks that its CLI is in `PATH` and is non-fatal if unavailable.
+
 ## Exit Codes
 
 | Code | Meaning | Alias Action |
@@ -218,6 +232,8 @@ Commands are chained with `&& \` for readability, with 2-space indent on continu
 | `HOME` | Used to resolve default tries path (`$HOME/src/tries`) |
 | `SHELL` | Used by `init` to detect shell type |
 | `NO_COLOR` | If set, disables colors (equivalent to `--no-colors`) |
+| `HERDR_ENV`, `HERDR_PANE_ID`, `HERDR_WORKSPACE_ID` | Identify the current Herdr panel and workspace for renaming |
+| `CMUX_SOCKET_PATH`, `CMUX_BUNDLE_ID` | Identify cmux for tab renaming |
 
 ## Defaults
 

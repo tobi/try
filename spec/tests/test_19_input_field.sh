@@ -35,12 +35,14 @@ output=$(try_run --path="$TEST_TRIES" --and-exit --and-keys="ab,BACKSPACE,BACKSP
 # Input should be empty or show placeholder
 pass  # Hard to verify empty input, just ensure no crash
 
-# Test: Cursor position updates with arrow keys (if supported)
-# Left arrow should move cursor within input
-output=$(try_run --path="$TEST_TRIES" --and-exit --and-keys="abc,LEFT,LEFT,d" exec 2>&1)
-# Typing 'd' after moving left twice should insert in middle
-# Result could be "adbc" if insert mode works
-pass  # Implementation-dependent
+# Test: Left/Right arrows move the search-box cursor (insert in the middle)
+output=$(try_run --path="$TEST_TRIES" --and-exit --and-keys="TYPE=abc,LEFT,LEFT,d" exec 2>&1)
+stripped=$(echo "$output" | strip_ansi)
+if echo "$stripped" | grep -q "adbc"; then
+    pass
+else
+    fail "left arrow should move cursor so d inserts in the middle" "adbc in search" "$output" "tui_spec.md#line-editing"
+fi
 
 # Test: Input accepts spaces
 output=$(try_run --path="$TEST_TRIES" --and-exit --and-keys="a b" exec 2>&1)
@@ -71,10 +73,15 @@ else
     pass  # As long as no crash
 fi
 
-# Test: Ctrl-U clears input line
-output=$(try_run --path="$TEST_TRIES" --and-exit --and-keys="testing,CTRL-U" exec 2>&1)
-# After Ctrl-U, "testing" should not appear in search line
-pass  # Implementation-dependent, just verify no crash
+# Test: Ctrl-U clears from start of line to cursor (cursor at end => clear all)
+output=$(try_run --path="$TEST_TRIES" --and-exit --and-keys="TYPE=testing,CTRL-U" exec 2>&1)
+stripped=$(echo "$output" | strip_ansi)
+search_line=$(echo "$stripped" | grep "Search:" | tail -1)
+if echo "$search_line" | grep -q "testing"; then
+    fail "Ctrl-U should clear the search text" "no testing on Search: line" "$search_line" "tui_spec.md#line-editing"
+else
+    pass
+fi
 
 # Test: Empty input shows all entries
 output=$(try_run --path="$TEST_TRIES" --and-exit exec 2>&1)

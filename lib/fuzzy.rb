@@ -57,7 +57,7 @@ class Fuzzy
 
     # Iterate over matches: yields (entry_data, highlight_positions, score)
     def each(&block)
-      return enum_for(:each) unless block_given?
+      return enum_for(:each) unless block
 
       results = []
 
@@ -68,11 +68,16 @@ class Fuzzy
         results << [entry.data, positions, score]
       end
 
+      # Spinel has no Array#max_by(n); full sort is fine at try-directory scale.
+      results.sort_by! { |_, _, score| -score }
       if @limit && @limit < results.length
-        # Partial sort: O(n log k) via heap selection instead of full O(n log n) sort
-        results = results.max_by(@limit) { |_, _, score| score }
-      else
-        results.sort_by! { |_, _, score| -score }
+        limited = []
+        i = 0
+        while i < @limit
+          limited << results[i]
+          i += 1
+        end
+        results = limited
       end
 
       results.each(&block)
@@ -102,7 +107,15 @@ class Fuzzy
 
       query_chars.each do |qc|
         # Find next occurrence of query char starting from pos
-        found = text.index(qc, pos)
+        found = nil
+        i = pos
+        while i < text.length
+          if text[i] == qc
+            found = i
+            break
+          end
+          i += 1
+        end
         return nil unless found  # No match
 
         positions << found

@@ -2,10 +2,103 @@
 
 require 'io/console'
 require 'time'
-require 'fileutils'
 require 'set'
 require_relative 'lib/tui'
 require_relative 'lib/fuzzy'
+
+# Spinel AOT has no FileUtils, IO#raw/#cooked/#iflush, IO.console, or Gem.
+# These helpers are MRI-compatible stand-ins so the same source runs both ways.
+module TryCompat
+  def self.mkdir_p(path)
+    path = File.expand_path(path.to_s)
+    return path if Dir.exist?(path)
+    stack = []
+    dir = path
+    while dir && dir != "/" && dir != "." && !Dir.exist?(dir)
+      stack.unshift(dir)
+      parent = File.dirname(dir)
+      break if parent == dir
+      dir = parent
+    end
+    stack.each do |d|
+      begin
+        Dir.mkdir(d.to_s)
+      rescue Errno::EEXIST
+      end
+    end
+    path
+  end
+
+  def self.stty_save
+    `stty -g 2>/dev/null`.to_s.chomp
+  rescue
+    ""
+  end
+
+  def self.stty_set(state)
+    return if state.nil? || state.empty?
+    system("stty #{state} 2>/dev/null")
+  end
+
+  def self.with_raw_tty
+    saved = nil
+    if STDIN.tty?
+      saved = stty_save
+      system("stty raw -echo 2>/dev/null")
+    end
+    yield
+  ensure
+    stty_set(saved) if saved && !saved.empty?
+  end
+
+  def self.with_cooked_tty
+    saved = nil
+    if STDIN.tty?
+      saved = stty_save
+      system("stty cooked echo 2>/dev/null")
+    end
+    yield
+  ensure
+    stty_set(saved) if saved && !saved.empty?
+  end
+
+  def self.stdin_iflush
+    begin
+      loop { STDIN.read_nonblock(4096) }
+    rescue IO::WaitReadable, EOFError, Errno::EAGAIN, Errno::EWOULDBLOCK, Errno::EINVAL
+    end
+  end
+
+  def self.win_platform?
+    !!(RUBY_PLATFORM.to_s =~ /mswin|mingw|cygwin/i)
+  end
+
+  # true when this process is a Spinel-compiled native binary (or any
+  # non-.rb executable), so init snippets should invoke $0 directly.
+  def self.compiled_binary?
+    name = File.basename($0.to_s)
+    !name.end_with?(".rb")
+  end
+
+  def self.self_exec_prefix(script_path)
+    quoted = "'" + script_path.to_s.gsub("'", %q('"'"')) + "'"
+    if compiled_binary?
+      quoted
+    else
+      "/usr/bin/env ruby #{quoted}"
+    end
+  end
+end
+
+# Emergency restore if the process exits while the TUI alt-screen is active.
+$try_tui_active = false
+at_exit do
+  next unless $try_tui_active
+  begin
+    STDERR.print("#{Tui::ANSI::RESET}#{Tui::ANSI::CURSOR_DEFAULT}#{Tui::ANSI::SHOW}#{Tui::ANSI::ALT_SCREEN_OFF}")
+  rescue
+  end
+end
 
 class TrySelector
   include Tui::Helpers
@@ -19,13 +112,14 @@ class TrySelector
   def initialize(search_term = "", base_path: TRY_PATH, initial_input: nil, test_render_once: false, test_no_cls: false, test_keys: nil, test_confirm: nil)
     @search_term = search_term.gsub(/\s+/, '-')
     @cursor_pos = 0  # Navigation cursor (list position)
-    @input_cursor_pos = 0  # Text cursor (position within search buffer)
     @scroll_offset = 0
-    @input_buffer = initial_input ? initial_input.gsub(/\s+/, '-') : @search_term
-    @input_cursor_pos = @input_buffer.length  # Start at end of buffer
+    @search = Tui::InputField.new(
+      placeholder: "",
+      text: initial_input ? initial_input.gsub(/\s+/, '-') : @search_term
+    )
     @selected = nil
     @all_trials = nil  # Memoized trials
-    @base_path = base_path
+    @base_path = base_path.to_s
     @delete_status = nil  # Status message for deletions
     @delete_mode = false  # Whether we're in deletion mode
     @marked_for_deletion = []  # Paths marked for deletion
@@ -37,7 +131,7 @@ class TrySelector
     @old_winch_handler = nil  # Store original SIGWINCH handler
     @needs_redraw = false
 
-    FileUtils.mkdir_p(@base_path) unless Dir.exist?(@base_path)
+    TryCompat.mkdir_p(@base_path) unless Dir.exist?(@base_path.to_s)
   end
 
   def run
@@ -61,7 +155,7 @@ class TrySelector
       end
       main_loop
     else
-      STDERR.raw do
+      TryCompat.with_raw_tty do
         main_loop
       end
     end
@@ -72,23 +166,35 @@ class TrySelector
   private
 
   def setup_terminal
+    @terminal_restored = false
     unless @test_no_cls
       # Switch to alternate screen buffer (like vim, less, etc.)
       STDERR.print("#{Tui::ANSI::ALT_SCREEN_ON}#{Tui::ANSI.set_title("try")}#{Tui::ANSI::CURSOR_BLINK}")
+      $try_tui_active = true
     end
 
-    @old_winch_handler = Signal.trap('WINCH') { @needs_redraw = true }
+    # Spinel can SIGSEGV restoring a previous WINCH handler on process exit.
+    unless TryCompat.compiled_binary?
+      @old_winch_handler = Signal.trap('WINCH') { @needs_redraw = true } if Signal.list.key?('WINCH')
+    end
   end
 
   def restore_terminal
+    return if @terminal_restored
+    @terminal_restored = true
     unless @test_no_cls
       STDERR.print(Tui::ANSI::RESET)
       STDERR.print(Tui::ANSI::CURSOR_DEFAULT)
       # Return to main screen buffer
       STDERR.print(Tui::ANSI::ALT_SCREEN_OFF)
+      $try_tui_active = false
     end
 
     Signal.trap('WINCH', @old_winch_handler) if @old_winch_handler
+    begin
+      TryCompat.stdin_iflush
+    rescue
+    end
   end
 
   def load_all_tries
@@ -96,7 +202,7 @@ class TrySelector
     @all_tries ||= begin
       tries = []
       now = Time.now
-      Dir.foreach(@base_path) do |entry|
+      Dir.foreach(@base_path.to_s) do |entry|
         # exclude . and .. but also .git, and any other hidden dirs.
         next if entry.start_with?('.')
 
@@ -145,13 +251,15 @@ class TrySelector
       end
     end
 
-    def method_missing(name, *)
-      data[name]
-    end
+    def text; data[:text]; end
+    def basename; data[:basename]; end
+    def path; data[:path]; end
+    def is_new; data[:is_new]; end
+    def is_symlink; data[:is_symlink]; end
+    def ctime; data[:ctime]; end
+    def mtime; data[:mtime]; end
+    def base_score; data[:base_score]; end
 
-    def respond_to_missing?(name, include_private = false)
-      data.key?(name) || super
-    end
   end
 
   def get_tries
@@ -159,15 +267,15 @@ class TrySelector
     @fuzzy ||= Fuzzy.new(@all_tries)
 
     # Cache results - only re-match when query changes
-    if @last_query == @input_buffer && @cached_results
+    if @last_query == @search.text && @cached_results
       return @cached_results
     end
 
-    @last_query = @input_buffer
-    height = IO.console&.winsize&.first || 24
+    @last_query = @search.text
+    height = Tui::Terminal.size(STDERR)[0] || 24
     max_results = [height - 6, 3].max
     results = []
-    @fuzzy.match(@input_buffer).limit(max_results).each do |entry, positions, score|
+    @fuzzy.match(@search.text).limit(max_results).each do |entry, positions, score|
       results << TryEntry.new(entry, score, positions)
     end
     @cached_results = results
@@ -176,7 +284,7 @@ class TrySelector
   def main_loop
     loop do
       tries = get_tries
-      show_create_new = !@input_buffer.empty?
+      show_create_new = !@search.text.empty?
       total_items = tries.length + (show_create_new ? 1 : 0)
 
       # Ensure cursor is within bounds
@@ -187,6 +295,12 @@ class TrySelector
       key = read_key
       # nil means terminal resize - just re-render with new dimensions
       next unless key
+
+      before = @search.text
+      if @search.handle_key(key)
+        @cursor_pos = 0 if @search.text != before
+        next
+      end
 
       case key
       when "\r"  # Enter (carriage return)
@@ -206,35 +320,9 @@ class TrySelector
         @cursor_pos = [@cursor_pos - 1, 0].max
       when "\e[B", "\x0E"  # Down arrow or Ctrl-N
         @cursor_pos = [@cursor_pos + 1, total_items - 1].min
-      when "\e[C"  # Right arrow - ignore
-        # Do nothing
-      when "\e[D"  # Left arrow - ignore
-        # Do nothing
-      when "\x7F", "\b"  # Backspace (DEL and BS)
-        if @input_cursor_pos > 0
-          @input_buffer = @input_buffer[0...(@input_cursor_pos-1)] + @input_buffer[@input_cursor_pos..]
-          @input_cursor_pos -= 1
-        end
-        @cursor_pos = 0  # Reset list selection when typing
-      when "\x01"  # Ctrl-A - beginning of line
-        @input_cursor_pos = 0
-      when "\x05"  # Ctrl-E - end of line
-        @input_cursor_pos = @input_buffer.length
-      when "\x02"  # Ctrl-B - backward char
-        @input_cursor_pos = [@input_cursor_pos - 1, 0].max
-      when "\x06"  # Ctrl-F - forward char
-        @input_cursor_pos = [@input_cursor_pos + 1, @input_buffer.length].min
-      when "\x0B"  # Ctrl-K - kill to end of line
-        @input_buffer = @input_buffer[0...@input_cursor_pos]
-      when "\x17"  # Ctrl-W - delete word backward (alphanumeric)
-        if @input_cursor_pos > 0
-          new_pos = word_boundary_backward(@input_buffer, @input_cursor_pos)
-          @input_buffer = @input_buffer[0...new_pos] + @input_buffer[@input_cursor_pos..]
-          @input_cursor_pos = new_pos
-        end
       when "\x04"  # Ctrl-D - toggle mark for deletion
         if @cursor_pos < tries.length
-          path = tries[@cursor_pos][:path]
+          path = tries[@cursor_pos].path
           if @marked_for_deletion.include?(path)
             @marked_for_deletion.delete(path)
           else
@@ -262,21 +350,16 @@ class TrySelector
           run_repo_dialog(tries[@cursor_pos])
           break if @selected
         end
-      when "\x03", "\e"  # Ctrl-C or ESC
+      when "\x03", "\x1b"  # Ctrl-C or ESC
         if @delete_mode
           # Exit delete mode, clear marks
           @marked_for_deletion.clear
           @delete_mode = false
         else
-          @selected = nil
+          # Return a Hash (not nil): Spinel can SIGSEGV if this method's
+          # inferred return type is Hash and we break with nil.
+          @selected = { type: :cancel }
           break
-        end
-      when String
-        # Only accept printable characters, not escape sequences
-        if key.length == 1 && key.match?(INPUT_CHAR_RE)
-          @input_buffer = @input_buffer[0...@input_cursor_pos] + key + @input_buffer[@input_cursor_pos..]
-          @input_cursor_pos += 1
-          @cursor_pos = 0  # Reset list selection when typing
         end
       end
     end
@@ -309,10 +392,30 @@ class TrySelector
 
     if input == "\e"
       begin
-        input << STDIN.read_nonblock(3)
-        input << STDIN.read_nonblock(2)
-      rescue IO::WaitReadable, EOFError
-        # No more escape sequence data available
+        nxt = STDIN.read_nonblock(1)
+        input << nxt
+        if nxt == "["
+          # CSI: consume until a final byte in 0x40-0x7E so mouse/unknown
+          # sequences never leak into the filter. Bare ESC still returns "\e"
+          # when no following byte is available (WaitReadable).
+          loop do
+            ch = STDIN.read_nonblock(1)
+            input << ch
+            code = ch.ord
+            break if code >= 0x40 && code <= 0x7E
+          end
+          # X10 mouse: ESC [ M + 3 payload bytes
+          if input == "\e[M"
+            begin
+              input << STDIN.read_nonblock(3)
+            rescue IO::WaitReadable, EOFError, Errno::EAGAIN, Errno::EWOULDBLOCK
+            end
+          end
+        elsif nxt == "O"
+          input << STDIN.read_nonblock(1)
+        end
+      rescue IO::WaitReadable, EOFError, Errno::EAGAIN, Errno::EWOULDBLOCK
+        # Standalone ESC (or incomplete sequence) — keep what we have
       end
     end
 
@@ -336,37 +439,39 @@ class TrySelector
     width = screen.width
     height = screen.height
 
-    screen.header.add_line { |line| line.write << emoji("🏠") << Tui::Text.accent(" Try Directory Selection") }
-    screen.header.add_line { |line| line.write.write_dim(fill("─")) }
-    screen.header.add_line do |line|
+    line = screen.header.add_line
+    line.write.write(emoji("🏠")).write(Tui::Text.accent(" Try Directory Selection") )
+    line = screen.header.add_line
+    line.write.write_dim(fill("─")) 
+    line = screen.header.add_line
       prefix = "Search: "
       line.write.write_dim(prefix)
-      line.write << screen.input("", value: @input_buffer, cursor: @input_cursor_pos).to_s
+      line.write.write(screen.input("", value: @search.text, cursor: @search.cursor).to_s)
       line.mark_has_input(Tui::Metrics.visible_width(prefix))
-    end
-    screen.header.add_line { |line| line.write.write_dim(fill("─")) }
+    line = screen.header.add_line
+    line.write.write_dim(fill("─")) 
 
     # Add footer first to get accurate line count
-    screen.footer.add_line { |line| line.write.write_dim(fill("─")) }
+    line = screen.footer.add_line
+    line.write.write_dim(fill("─")) 
     if @delete_status
-      screen.footer.add_line { |line| line.write.write_bold(@delete_status) }
+      line = screen.footer.add_line
+      line.write.write_bold(@delete_status) 
       @delete_status = nil
     elsif @delete_mode
-      screen.footer.add_line(background: Tui::Palette::DANGER_BG) do |line|
+      line = screen.footer.add_line(Tui::Palette::DANGER_BG)
         line.write.write_bold(" DELETE MODE ")
-        line.write << " #{@marked_for_deletion.length} marked  |  Ctrl-D: Toggle  Enter: Confirm  Esc: Cancel"
-      end
+        line.write.write(" #{@marked_for_deletion.length} marked  |  Ctrl-D: Toggle  Enter: Confirm  Esc: Cancel")
     else
-      screen.footer.add_line do |line|
-        line.center.write_dim("↑/↓: Navigate  Enter: Select  ^R: Rename  ^G: Graduate  ^U: Repo  ^D: Delete  Esc: Cancel")
-      end
+      line = screen.footer.add_line
+        line.center.write_dim("↑/↓: Navigate  Enter: Select  ^R: Rename  ^G: Graduate  ^D: Delete  Esc: Cancel")
     end
 
     # Calculate max visible from actual header/footer counts
     header_lines = screen.header.lines.length
     footer_lines = screen.footer.lines.length
     max_visible = [height - header_lines - footer_lines, 3].max
-    show_create_new = !@input_buffer.empty?
+    show_create_new = !@search.text.empty?
     total_items = tries.length + (show_create_new ? 1 : 0)
 
     if @cursor_pos < @scroll_offset
@@ -378,7 +483,7 @@ class TrySelector
     visible_end = [@scroll_offset + max_visible, total_items].min
 
     (@scroll_offset...visible_end).each do |idx|
-      if idx == tries.length && tries.any? && idx >= @scroll_offset
+      if idx == tries.length && !tries.empty? && idx >= @scroll_offset
         screen.body.add_line
       end
 
@@ -393,28 +498,28 @@ class TrySelector
   end
 
   def render_entry_line(screen, entry, is_selected, width)
-    is_marked = @marked_for_deletion.include?(entry[:path])
-    # Marked items always show red; selection shows via arrow only
+    is_marked = @marked_for_deletion.include?(entry.path)
+    # Marked items keep the danger background; selected rows add a readable foreground.
     background = if is_marked
-      Tui::Palette::DANGER_BG
+      Tui::Palette::DANGER_BG + (is_selected ? Tui::Palette::SELECTED_FG : "")
     elsif is_selected
-      Tui::Palette::SELECTED_BG
+      Tui::Palette::SELECTED_BG + Tui::Palette::SELECTED_FG
     end
 
-    line = screen.body.add_line(background: background)
-    line.write << (is_selected ? Tui::Text.highlight("→ ") : "  ")
+    line = screen.body.add_line(background)
+    line.write.write((is_selected ? Tui::Text.highlight("→ ") + selected_foreground : "  "))
     icon = if is_marked
       emoji("🗑️")
-    elsif entry[:is_symlink]
+    elsif entry.is_symlink
       emoji("🔗")
     else
       emoji("📁")
     end
-    line.write << icon << " "
+    line.write.write(icon).write(" ")
 
-    plain_name, rendered_name = formatted_entry_name(entry)
+    plain_name, rendered_name = formatted_entry_name(entry, selected: is_selected)
     prefix_width = 5
-    meta_text = "#{format_relative_time(entry[:mtime])}, #{format('%.1f', entry[:score])}"
+    meta_text = "#{format_relative_time(entry.mtime)}, #{format('%.1f', entry.score)}"
 
     # Only truncate name if it exceeds total line width (not to make room for metadata)
     max_name_width = width - prefix_width - 1
@@ -424,45 +529,55 @@ class TrySelector
       display_rendered = rendered_name
     end
 
-    line.write << display_rendered
+    line.write.write(display_rendered)
 
     # Right content is lower layer - will be overwritten by left if they overlap
-    line.right.write_dim(meta_text)
+    line.right.write(is_selected ? meta_text : Tui::Text.dim(meta_text))
   end
 
   def render_create_line(screen, is_selected, width)
-    background = is_selected ? Tui::Palette::SELECTED_BG : nil
-    line = screen.body.add_line(background: background)
-    line.write << (is_selected ? Tui::Text.highlight("→ ") : "  ")
+    background = if is_selected
+      Tui::Palette::SELECTED_BG + Tui::Palette::SELECTED_FG
+    end
+    line = screen.body.add_line(background)
+    line.write.write((is_selected ? Tui::Text.highlight("→ ") + selected_foreground : "  "))
     date_prefix = Time.now.strftime("%Y-%m-%d")
-    label = if @input_buffer.empty?
+    label = if @search.text.empty?
       "📂 Create new: #{date_prefix}-"
     else
-      "📂 Create new: #{date_prefix}-#{@input_buffer}"
+      "📂 Create new: #{date_prefix}-#{@search.text}"
     end
-    line.write << label
+    line.write.write(label)
   end
 
-  def formatted_entry_name(entry)
-    basename = entry[:basename]
-    positions = entry[:highlight_positions] || []
+  def formatted_entry_name(entry, selected: false)
+    basename = entry.basename
+    positions = entry.highlight_positions || []
 
     if basename =~ /^(\d{4}-\d{2}-\d{2})-(.+)$/
       date_part = $1
       name_part = $2
       date_len = date_part.length + 1  # +1 for the hyphen
 
-      rendered = Tui::Text.dim(date_part)
+      rendered = selected ? date_part : Tui::Text.dim(date_part)
       # Highlight hyphen if it's in positions
-      rendered += positions.include?(10) ? Tui::Text.highlight('-') : Tui::Text.dim('-')
-      rendered += highlight_with_positions(name_part, positions, date_len)
+      hyphen = if positions.include?(10)
+        Tui::Text.highlight('-')
+      elsif selected
+        '-'
+      else
+        Tui::Text.dim('-')
+      end
+      rendered += hyphen
+      rendered += selected_foreground if selected && positions.include?(10)
+      rendered += highlight_with_positions(name_part, positions, date_len, selected: selected)
       ["#{date_part}-#{name_part}", rendered]
     else
-      [basename, highlight_with_positions(basename, positions, 0)]
+      [basename, highlight_with_positions(basename, positions, 0, selected: selected)]
     end
   end
 
-  def highlight_with_positions(text, positions, offset)
+  def highlight_with_positions(text, positions, offset, selected: false)
     pos_set = positions.is_a?(Set) ? positions : positions.to_set
     result = String.new
     chars = text.chars
@@ -474,6 +589,7 @@ class TrySelector
         i += 1
         i += 1 while i < chars.length && pos_set.include?(i + offset)
         result << Tui::Text.highlight(chars[batch_start...i].join)
+        result << selected_foreground if selected
       else
         result << chars[i]
         i += 1
@@ -482,13 +598,14 @@ class TrySelector
     result
   end
 
+  def selected_foreground
+    Tui.colors_enabled? ? Tui::Palette::SELECTED_FG : ""
+  end
+
   # Find the position of the previous word boundary for Ctrl-W deletion.
   # Skips non-alphanumeric chars, then skips alphanumeric chars.
   def word_boundary_backward(buffer, cursor)
-    pos = cursor - 1
-    pos -= 1 while pos >= 0 && !buffer[pos].match?(WORD_CHAR_RE)
-    pos -= 1 while pos >= 0 && buffer[pos].match?(WORD_CHAR_RE)
-    pos + 1
+    Tui::InputField.new(placeholder: "", text: buffer.to_s, cursor: cursor).word_boundary_backward(buffer.to_s, cursor)
   end
 
   def format_relative_time(time)
@@ -540,55 +657,30 @@ class TrySelector
     @delete_mode = false
     @marked_for_deletion.clear
 
-    current_name = entry[:basename]
-    rename_buffer = current_name.dup
-    rename_cursor = rename_buffer.length
+    current_name = entry.basename
+    input = Tui::InputField.new(placeholder: "", text: current_name.dup)
     rename_error = nil
 
     loop do
-      render_rename_dialog(current_name, rename_buffer, rename_cursor, rename_error)
+      render_rename_dialog(current_name, input.text, input.cursor, rename_error)
 
       ch = read_key
+      next unless ch
+      before = input.text
+      if input.handle_key(ch)
+        rename_error = nil if input.text != before
+        next
+      end
       case ch
       when "\r"  # Enter - confirm
-        result = finalize_rename(entry, rename_buffer)
+        result = finalize_rename(entry, input.text)
         if result == true
           break
         else
           rename_error = result  # Error message string
         end
-      when "\e", "\x03"  # ESC or Ctrl-C - cancel
+      when "\x1b", "\x03"  # ESC or Ctrl-C - cancel
         break
-      when "\x7F", "\b"  # Backspace
-        if rename_cursor > 0
-          rename_buffer = rename_buffer[0...(rename_cursor - 1)] + rename_buffer[rename_cursor..].to_s
-          rename_cursor -= 1
-        end
-        rename_error = nil
-      when "\x01"  # Ctrl-A - start of line
-        rename_cursor = 0
-      when "\x05"  # Ctrl-E - end of line
-        rename_cursor = rename_buffer.length
-      when "\x02"  # Ctrl-B - back one char
-        rename_cursor = [rename_cursor - 1, 0].max
-      when "\x06"  # Ctrl-F - forward one char
-        rename_cursor = [rename_cursor + 1, rename_buffer.length].min
-      when "\x0B"  # Ctrl-K - kill to end
-        rename_buffer = rename_buffer[0...rename_cursor]
-        rename_error = nil
-      when "\x17"  # Ctrl-W - delete word backward
-        if rename_cursor > 0
-          new_pos = word_boundary_backward(rename_buffer, rename_cursor)
-          rename_buffer = rename_buffer[0...new_pos] + rename_buffer[rename_cursor..].to_s
-          rename_cursor = new_pos
-        end
-        rename_error = nil
-      when String
-        if ch.length == 1 && ch =~ /[a-zA-Z0-9\-_\.\s\/]/
-          rename_buffer = rename_buffer[0...rename_cursor] + ch + rename_buffer[rename_cursor..].to_s
-          rename_cursor += 1
-          rename_error = nil
-        end
       end
     end
 
@@ -598,21 +690,21 @@ class TrySelector
   def render_rename_dialog(current_name, rename_buffer, rename_cursor, rename_error)
     screen = Tui::Screen.new(io: STDERR)
 
-    screen.header.add_line do |line|
-      line.center << emoji("✏️") << Tui::Text.accent("  Rename directory")
-    end
-    screen.header.add_line { |line| line.write.write_dim(fill("─")) }
+    line = screen.header.add_line
+      line.center.write(emoji("✏️")).write(Tui::Text.accent("  Rename directory"))
+    line = screen.header.add_line
+    line.write.write_dim(fill("─")) 
 
-    screen.body.add_line do |line|
-      line.write << emoji("📁") << " #{current_name}"
-    end
+    line = screen.body.add_line
+      line.write.write(emoji("📁")).write(" #{current_name}")
 
     # Add empty lines, then centered input prompt
-    2.times { screen.body.add_line }
-    screen.body.add_line do |line|
+    screen.body.add_line
+    screen.body.add_line
+    line = screen.body.add_line
       prefix = "New name: "
       line.center.write_dim(prefix)
-      line.center << screen.input("", value: rename_buffer, cursor: rename_cursor).to_s
+      line.center.write(screen.input("", value: rename_buffer, cursor: rename_cursor).to_s)
       # Input displays buffer + trailing space when cursor at end
       # Use (width - 1) to match Line.render's max_content calculation
       input_width = [rename_buffer.length, rename_cursor + 1].max
@@ -620,22 +712,24 @@ class TrySelector
       max_content = screen.width - 1
       center_start = (max_content - prefix_width - input_width) / 2
       line.mark_has_input(center_start + prefix_width)
-    end
 
     if rename_error
       screen.body.add_line
-      screen.body.add_line { |line| line.center.write_bold(rename_error) }
+      line = screen.body.add_line
+      line.center.write_bold(rename_error) 
     end
 
-    screen.footer.add_line { |line| line.write.write_dim(fill("─")) }
-    screen.footer.add_line { |line| line.center.write_dim("Enter: Confirm  Esc: Cancel") }
+    line = screen.footer.add_line
+    line.write.write_dim(fill("─")) 
+    line = screen.footer.add_line
+    line.center.write_dim("Enter: Confirm  Esc: Cancel") 
 
     screen.flush
   end
 
   def finalize_rename(entry, rename_buffer)
     new_name = rename_buffer.strip.gsub(/\s+/, '-')
-    old_name = entry[:basename]
+    old_name = entry.basename
 
     return "Name cannot be empty" if new_name.empty?
     return "Name cannot contain /" if new_name.include?('/')
@@ -651,7 +745,7 @@ class TrySelector
     @delete_mode = false
     @marked_for_deletion.clear
 
-    current_name = entry[:basename]
+    current_name = entry.basename
 
     # Strip date prefix for the default project name
     project_name = current_name.sub(/^\d{4}-\d{2}-\d{2}-/, '')
@@ -663,54 +757,29 @@ class TrySelector
       File.dirname(@base_path)
     end
 
-    ascend_buffer = File.join(projects_dir, project_name)
-    ascend_cursor = ascend_buffer.length
+    input = Tui::InputField.new(placeholder: "", text: File.join(projects_dir, project_name))
     ascend_error = nil
 
     loop do
-      render_ascend_dialog(current_name, ascend_buffer, ascend_cursor, ascend_error, projects_dir)
+      render_ascend_dialog(current_name, input.text, input.cursor, ascend_error, projects_dir)
 
       ch = read_key
+      next unless ch
+      before = input.text
+      if input.handle_key(ch)
+        ascend_error = nil if input.text != before
+        next
+      end
       case ch
       when "\r"  # Enter - confirm
-        result = finalize_ascend(entry, ascend_buffer)
+        result = finalize_ascend(entry, input.text)
         if result == true
           break
         else
           ascend_error = result
         end
-      when "\e", "\x03"  # ESC or Ctrl-C - cancel
+      when "\x1b", "\x03"  # ESC or Ctrl-C - cancel
         break
-      when "\x7F", "\b"  # Backspace
-        if ascend_cursor > 0
-          ascend_buffer = ascend_buffer[0...(ascend_cursor - 1)] + ascend_buffer[ascend_cursor..].to_s
-          ascend_cursor -= 1
-        end
-        ascend_error = nil
-      when "\x01"  # Ctrl-A - start of line
-        ascend_cursor = 0
-      when "\x05"  # Ctrl-E - end of line
-        ascend_cursor = ascend_buffer.length
-      when "\x02"  # Ctrl-B - back one char
-        ascend_cursor = [ascend_cursor - 1, 0].max
-      when "\x06"  # Ctrl-F - forward one char
-        ascend_cursor = [ascend_cursor + 1, ascend_buffer.length].min
-      when "\x0B"  # Ctrl-K - kill to end
-        ascend_buffer = ascend_buffer[0...ascend_cursor]
-        ascend_error = nil
-      when "\x17"  # Ctrl-W - delete word backward
-        if ascend_cursor > 0
-          new_pos = word_boundary_backward(ascend_buffer, ascend_cursor)
-          ascend_buffer = ascend_buffer[0...new_pos] + ascend_buffer[ascend_cursor..].to_s
-          ascend_cursor = new_pos
-        end
-        ascend_error = nil
-      when String
-        if ch.length == 1 && ch =~ /[a-zA-Z0-9\-_\.\s\/~]/
-          ascend_buffer = ascend_buffer[0...ascend_cursor] + ch + ascend_buffer[ascend_cursor..].to_s
-          ascend_cursor += 1
-          ascend_error = nil
-        end
       end
     end
 
@@ -720,44 +789,43 @@ class TrySelector
   def render_ascend_dialog(current_name, ascend_buffer, ascend_cursor, ascend_error, projects_dir)
     screen = Tui::Screen.new(io: STDERR)
 
-    screen.header.add_line do |line|
-      line.center << emoji("🚀") << Tui::Text.accent("  Graduate try to project")
-    end
-    screen.header.add_line { |line| line.write.write_dim(fill("─")) }
+    line = screen.header.add_line
+      line.center.write(emoji("🚀")).write(Tui::Text.accent("  Graduate try to project"))
+    line = screen.header.add_line
+    line.write.write_dim(fill("─")) 
 
-    screen.body.add_line do |line|
-      line.write << emoji("📁") << " #{current_name}"
-    end
+    line = screen.body.add_line
+      line.write.write(emoji("📁")).write(" #{current_name}")
     screen.body.add_line
 
     env_hint = TRY_PROJECTS ? "$TRY_PROJECTS" : "parent of $TRY_PATH"
-    screen.body.add_line do |line|
+    line = screen.body.add_line
       line.center.write_dim("Destination (#{env_hint}: #{projects_dir})")
-    end
 
-    screen.body.add_line do |line|
+    line = screen.body.add_line
       prefix = "Move to: "
       line.center.write_dim(prefix)
-      line.center << screen.input("", value: ascend_buffer, cursor: ascend_cursor).to_s
+      line.center.write(screen.input("", value: ascend_buffer, cursor: ascend_cursor).to_s)
       input_width = [ascend_buffer.length, ascend_cursor + 1].max
       prefix_width = Tui::Metrics.visible_width(prefix)
       max_content = screen.width - 1
       center_start = (max_content - prefix_width - input_width) / 2
       line.mark_has_input(center_start + prefix_width)
-    end
 
     screen.body.add_line
-    screen.body.add_line do |line|
+    line = screen.body.add_line
       line.center.write_dim("A symlink will be left in the tries directory")
-    end
 
     if ascend_error
       screen.body.add_line
-      screen.body.add_line { |line| line.center.write_bold(ascend_error) }
+      line = screen.body.add_line
+      line.center.write_bold(ascend_error) 
     end
 
-    screen.footer.add_line { |line| line.write.write_dim(fill("─")) }
-    screen.footer.add_line { |line| line.center.write_dim("Enter: Confirm  Esc: Cancel") }
+    line = screen.footer.add_line
+    line.write.write_dim(fill("─")) 
+    line = screen.footer.add_line
+    line.center.write_dim("Enter: Confirm  Esc: Cancel") 
 
     screen.flush
   end
@@ -774,9 +842,9 @@ class TrySelector
 
     @selected = {
       type: :ascend,
-      source: entry[:path],
+      source: entry.path,
       dest: dest,
-      basename: entry[:basename],
+      basename: entry.basename,
       base_path: @base_path
     }
     true
@@ -911,7 +979,7 @@ class TrySelector
 
   def handle_selection(try_dir)
     # Select existing try directory
-    @selected = { type: :cd, path: try_dir[:path] }
+    @selected = { type: :cd, path: try_dir.path }
   end
 
   def handle_create_new
@@ -919,8 +987,8 @@ class TrySelector
     date_prefix = Time.now.strftime("%Y-%m-%d")
 
     # If user already typed a name, use it directly
-    if !@input_buffer.empty?
-      final_name = "#{date_prefix}-#{@input_buffer}".gsub(/\s+/, '-')
+    if !@search.text.empty?
+      final_name = "#{date_prefix}-#{@search.text}".gsub(/\s+/, '-')
       full_path = File.join(@base_path, final_name)
       @selected = { type: :mkdir, path: full_path }
     else
@@ -934,8 +1002,8 @@ class TrySelector
         STDERR.print("> #{date_prefix}-")
         STDERR.flush
 
-        STDERR.cooked do
-          STDIN.iflush
+        TryCompat.with_cooked_tty do
+          TryCompat.stdin_iflush
           entry = STDIN.gets&.chomp.to_s
         end
       ensure
@@ -953,21 +1021,19 @@ class TrySelector
 
   def confirm_batch_delete(tries)
     # Find marked items with their info
-    marked_items = tries.select { |t| @marked_for_deletion.include?(t[:path]) }
+    marked_items = tries.select { |t| @marked_for_deletion.include?(t.path) }
     return if marked_items.empty?
 
-    confirmation_buffer = ""
-    confirmation_cursor = 0
+    input = Tui::InputField.new(placeholder: "", text: "")
 
     # Handle test mode
     if @test_keys && !@test_keys.empty?
       while @test_keys && !@test_keys.empty?
         ch = @test_keys.shift
         break if ch == "\r" || ch == "\n"
-        confirmation_buffer << ch
-        confirmation_cursor = confirmation_buffer.length
+        input.handle_key(ch)
       end
-      process_delete_confirmation(marked_items, confirmation_buffer)
+      process_delete_confirmation(marked_items, input.text)
       return
     elsif @test_confirm || !STDERR.tty?
       confirmation_buffer = (@test_confirm || STDIN.gets)&.chomp.to_s
@@ -979,33 +1045,22 @@ class TrySelector
     # Clear screen once before dialog to ensure clean slate
     clear_screen unless @test_no_cls
     loop do
-      render_delete_dialog(marked_items, confirmation_buffer, confirmation_cursor)
+      render_delete_dialog(marked_items, input.text, input.cursor)
 
       ch = read_key
+      next unless ch
+      if input.handle_key(ch)
+        next
+      end
       case ch
       when "\r"  # Enter - confirm
-        process_delete_confirmation(marked_items, confirmation_buffer)
+        process_delete_confirmation(marked_items, input.text)
         break
-      when "\e"  # Escape - cancel
+      when "\e", "\x03"  # Escape or Ctrl-C - cancel
         @delete_status = "Delete cancelled"
         @marked_for_deletion.clear
         @delete_mode = false
         break
-      when "\x7F", "\b"  # Backspace
-        if confirmation_cursor > 0
-          confirmation_buffer = confirmation_buffer[0...confirmation_cursor-1] + confirmation_buffer[confirmation_cursor..]
-          confirmation_cursor -= 1
-        end
-      when "\x03"  # Ctrl-C
-        @delete_status = "Delete cancelled"
-        @marked_for_deletion.clear
-        @delete_mode = false
-        break
-      when String
-        if ch.length == 1 && ch.ord >= 32
-          confirmation_buffer = confirmation_buffer[0...confirmation_cursor] + ch + confirmation_buffer[confirmation_cursor..]
-          confirmation_cursor += 1
-        end
       end
     end
 
@@ -1016,23 +1071,23 @@ class TrySelector
     screen = Tui::Screen.new(io: STDERR)
 
     count = marked_items.length
-    screen.header.add_line do |line|
-      line.center << emoji("🗑️") << Tui::Text.accent("  Delete #{count} #{count == 1 ? 'directory' : 'directories'}?")
-    end
-    screen.header.add_line { |line| line.write.write_dim(fill("─")) }
+    line = screen.header.add_line
+      line.center.write(emoji("🗑️")).write(Tui::Text.accent("  Delete #{count} #{count == 1 ? 'directory' : 'directories'}?"))
+    line = screen.header.add_line
+    line.write.write_dim(fill("─")) 
 
     marked_items.each do |item|
-      screen.body.add_line(background: Tui::Palette::DANGER_BG) do |line|
-        line.write << emoji("🗑️") << " #{item[:basename]}"
-      end
+      line = screen.body.add_line(Tui::Palette::DANGER_BG)
+        line.write.write(emoji("🗑️")).write(" #{item.basename}")
     end
 
     # Add empty lines, then centered confirmation prompt
-    2.times { screen.body.add_line }
-    screen.body.add_line do |line|
+    screen.body.add_line
+    screen.body.add_line
+    line = screen.body.add_line
       prefix = "Type YES to confirm: "
       line.center.write_dim(prefix)
-      line.center << screen.input("", value: confirmation_buffer, cursor: confirmation_cursor).to_s
+      line.center.write(screen.input("", value: confirmation_buffer, cursor: confirmation_cursor).to_s)
       # Input displays buffer + trailing space when cursor at end
       # Use (width - 1) to match Line.render's max_content calculation
       input_width = [confirmation_buffer.length, confirmation_cursor + 1].max
@@ -1040,10 +1095,11 @@ class TrySelector
       max_content = screen.width - 1
       center_start = (max_content - prefix_width - input_width) / 2
       line.mark_has_input(center_start + prefix_width)
-    end
 
-    screen.footer.add_line { |line| line.write.write_dim(fill("─")) }
-    screen.footer.add_line { |line| line.center.write_dim("Enter: Confirm  Esc: Cancel") }
+    line = screen.footer.add_line
+    line.write.write_dim(fill("─")) 
+    line = screen.footer.add_line
+    line.center.write_dim("Enter: Confirm  Esc: Cancel") 
 
     screen.flush
   end
@@ -1056,11 +1112,11 @@ class TrySelector
         # Validate all paths first
         validated_paths = []
         marked_items.each do |item|
-          target_real = File.realpath(item[:path])
+          target_real = File.realpath(item.path)
           unless target_real.start_with?(base_real + "/")
             raise "Safety check failed: #{target_real} is not inside #{base_real}"
           end
-          validated_paths << { path: target_real, basename: item[:basename] }
+          validated_paths << { path: target_real, basename: item.basename }
         end
 
         # Return delete action with all paths
@@ -1085,9 +1141,12 @@ class TrySelector
 end
 
 # Main execution with OptionParser subcommands
-if __FILE__ == $0
+# Spinel AOT: $0 is the native binary, __FILE__ is this source path, so the
+# usual `$0 == __FILE__` guard would skip the CLI. try.rb is the program
+# entrypoint (tests load lib/* not this file).
+if $0 == __FILE__ || TryCompat.compiled_binary?
 
-  VERSION = "1.9.3"
+  VERSION = "1.10.1"
 
   def print_global_help
     text = <<~HELP
@@ -1118,7 +1177,7 @@ if __FILE__ == $0
         try                   Open interactive selector
         try project           Selector with initial filter
         try clone https://github.com/user/repo
-        try repo 2026-05-16-my-app
+        try https://github.com/user/repo/pull/123
         try worktree feature-branch
 
       Manual mode (without alias):
@@ -1162,13 +1221,22 @@ if __FILE__ == $0
 
   # Helper to extract a "--name VALUE" or "--name=VALUE" option from args (last one wins)
   def extract_option_with_value!(args, opt_name)
-    i = args.rindex { |a| a == opt_name || a.start_with?("#{opt_name}=") }
-    return nil unless i
-    arg = args.delete_at(i)
+    found = -1
+    i = args.length - 1
+    while i >= 0
+      a = args[i]
+      if a == opt_name || a.start_with?("#{opt_name}=")
+        found = i
+        break
+      end
+      i -= 1
+    end
+    return nil if found < 0
+    arg = args.delete_at(found)
     if arg.include?('=')
       arg.split('=', 2)[1]
     else
-      args.delete_at(i)
+      args.delete_at(found)
     end
   end
 
@@ -1189,19 +1257,44 @@ if __FILE__ == $0
       # https://gitlab.com/user/repo or other git hosts
       host, user, repo = $1, $2, $3
       return { user: user, repo: repo, host: host }
-    elsif uri.match(%r{^git@([^:]+):([^/]+)/([^/]+)})
-      # git@host:user/repo
-      host, user, repo = $1, $2, $3
+    elsif uri.match(%r{^git@([^:]+):([^/]+)/(.+)})
+      # git@host:user/path/to/repo
+      host, user, path = $1, $2, $3
+      repo = File.basename(path)
+      return { user: user, repo: repo, host: host }
+    elsif uri.match(%r{^ssh://[^@/]+@([^/]+)/([^/]+)/(.+)})
+      # ssh://user@host:port/user/repo
+      host, user, path = $1, $2, $3
+      repo = File.basename(path)
+      return { user: user, repo: repo, host: host }
+    elsif uri.match(%r{^([^@/:]+)@([^:]+):(.+)})
+      # SCP-style SSH: user@host:path/to/repo
+      user, host, path = $1, $2, $3
+      repo = File.basename(path)
       return { user: user, repo: repo, host: host }
     else
       return nil
     end
   end
 
+  def github_pr_details(uri)
+    return nil unless uri
+
+    match = uri.match(%r{\Ahttps?://(?:www\.)?github\.com/([^/]+)/([^/]+)/pull/(\d+)/?\z})
+    return nil unless match
+
+    {
+      user: match[1],
+      repo: match[2].sub(/\.git\z/, ''),
+      pr_id: match[3],
+      git_uri: "https://github.com/#{match[1]}/#{match[2].sub(/\.git\z/, '')}.git"
+    }
+  end
+
   def generate_clone_directory_name(git_uri, custom_name = nil)
     return custom_name if custom_name && !custom_name.empty?
 
-    parsed = parse_git_uri(git_uri)
+    parsed = github_pr_details(git_uri) || parse_git_uri(git_uri)
     return nil unless parsed
 
     date_prefix = Time.now.strftime("%Y-%m-%d")
@@ -1261,6 +1354,7 @@ if __FILE__ == $0
         when 'CTRL-T', 'CTRLT' then keys << "\x14"
         when 'CTRL-U', 'CTRLU' then keys << "\x15"
         when 'CTRL-W', 'CTRLW' then keys << "\x17"
+        when 'DELETE' then keys << "\e[3~"
         when /^TYPE=/i
           tok.sub(/^TYPE=/i, '').each_char { |ch| keys << ch }
         else
@@ -1303,7 +1397,12 @@ if __FILE__ == $0
       exit 1
     end
 
-    script_clone(File.join(tries_path, dir_name), git_uri)
+    path = File.join(tries_path, dir_name)
+    if pr = github_pr_details(git_uri)
+      script_clone_pr(path, pr[:git_uri], pr[:pr_id])
+    else
+      script_clone(path, git_uri)
+    end
   end
 
   def repo_name_from_path(path)
@@ -1418,7 +1517,7 @@ if __FILE__ == $0
       exit 1
     end
 
-    FileUtils.mkdir_p(File.dirname(rc_path))
+    TryCompat.mkdir_p(File.dirname(rc_path))
     File.open(rc_path, 'a') { |f| f.write(block) }
     STDERR.puts "Added try shell integration to #{rc_path}"
     STDERR.puts "Restart your shell or run: source #{rc_path}" unless shell == 'pwsh'
@@ -1437,11 +1536,11 @@ if __FILE__ == $0
     return 'pwsh' if ENV["PSModulePath"] && !ENV["PSModulePath"].empty?
 
     # Fallback: check parent process name
-    parent = (`ps c -p #{Process.ppid} -o 'ucomm='`.strip rescue nil)
-    return 'fish' if parent&.include?('fish')
-    return 'zsh' if parent&.include?('zsh')
-    return 'bash' if parent&.include?('bash')
-    return 'pwsh' if parent&.match?(/pwsh|powershell/i)
+    parent = (`ps c -p #{Process.ppid} -o 'ucomm='`.strip rescue "").to_s
+    return 'fish' if parent.include?('fish')
+    return 'zsh' if parent.include?('zsh')
+    return 'bash' if parent.include?('bash')
+    return 'pwsh' if parent.match?(/pwsh|powershell/i)
 
     nil
   end
@@ -1455,7 +1554,7 @@ if __FILE__ == $0
       File.exist?(File.expand_path('~/.bashrc')) ? '~/.bashrc' : '~/.bash_profile'
     when 'pwsh'
       # PowerShell profile path from $PROFILE, or the standard location
-      ENV["PROFILE"] || (Gem.win_platform? ?
+      ENV["PROFILE"] || (TryCompat.win_platform? ?
         File.join(ENV["USERPROFILE"] || Dir.home, "Documents", "PowerShell", "Microsoft.PowerShell_profile.ps1") :
         File.join(Dir.home, ".config", "powershell", "Microsoft.PowerShell_profile.ps1"))
     end
@@ -1467,7 +1566,7 @@ if __FILE__ == $0
       fish_path_arg = explicit_path ? " --path '#{explicit_path}'" : " --path (if set -q TRY_PATH; echo \"$TRY_PATH\"; else; echo '#{default_path}'; end)"
       <<~FISH
         function try
-          set -l out (/usr/bin/env ruby '#{script_path}' exec#{fish_path_arg} $argv 2>/dev/tty | string collect)
+          set -l out (#{TryCompat.self_exec_prefix(script_path)} exec#{fish_path_arg} $argv 2>/dev/tty | string collect)
           if test $pipestatus[1] -eq 0
             eval $out
           else
@@ -1485,7 +1584,7 @@ if __FILE__ == $0
         function try {
           $tryPath = #{ps_path_expr}
           $tempErr = [System.IO.Path]::GetTempFileName()
-          $out = & ruby '#{script_path}' exec --path $tryPath @args 2>$tempErr
+          $out = & #{TryCompat.compiled_binary? ? q(script_path) : "ruby '#{script_path}'"} exec --path $tryPath @args 2>$tempErr
           if ($LASTEXITCODE -eq 0) {
             $out | Invoke-Expression
           } else {
@@ -1500,7 +1599,7 @@ if __FILE__ == $0
       <<~SH
         try() {
           local out
-          out=$(/usr/bin/env ruby '#{script_path}' exec#{path_arg} "$@" 2>/dev/tty)
+          out=$(#{TryCompat.self_exec_prefix(script_path)} exec#{path_arg} "$@" 2>/dev/tty)
           if [ $? -eq 0 ]; then
             eval "$out"
           else
@@ -1554,7 +1653,11 @@ if __FILE__ == $0
         exit 1
       end
       full_path = File.join(tries_path, dir_name)
-      return script_clone(full_path, git_uri)
+      if pr = github_pr_details(git_uri)
+        return script_clone_pr(full_path, pr[:git_uri], pr[:pr_id])
+      else
+        return script_clone(full_path, git_uri)
+      end
     end
 
     # Regular interactive selector
@@ -1581,6 +1684,8 @@ if __FILE__ == $0
       script_ascend(result[:source], result[:dest], result[:basename], result[:base_path])
     when :repo
       script_repo(result[:path], result[:repo_name], result[:visibility])
+    when :cancel
+      nil
     else
       script_cd(result[:path])
     end
@@ -1609,8 +1714,31 @@ if __FILE__ == $0
     end
   end
 
+  # Emit best-effort terminal manager rename commands. Keep these as the final
+  # commands so a missing or broken optional CLI never prevents the directory
+  # change from completing.
+  def terminal_rename_commands(path)
+    name = File.basename(path).sub(/\A\d{4}-\d{2}-\d{2}-/, '')
+    label = "try: #{name}"
+
+    if ENV['HERDR_ENV'] == '1' && ENV['HERDR_PANE_ID'] && !ENV['HERDR_PANE_ID'].empty?
+      commands = [
+        "command -v herdr >/dev/null 2>&1 && herdr pane report-metadata #{q(ENV['HERDR_PANE_ID'])} --source try --title #{q(label)} >/dev/null 2>&1 || true"
+      ]
+      if ENV['HERDR_PANE_ID'].match?(/:p1\z/) && ENV['HERDR_WORKSPACE_ID'] && !ENV['HERDR_WORKSPACE_ID'].empty?
+        commands << "command -v herdr >/dev/null 2>&1 && herdr workspace rename #{q(ENV['HERDR_WORKSPACE_ID'])} #{q(label)} >/dev/null 2>&1 || true"
+      end
+      commands
+    elsif (ENV['CMUX_SOCKET_PATH'] && !ENV['CMUX_SOCKET_PATH'].empty?) ||
+          (ENV['CMUX_BUNDLE_ID'] && !ENV['CMUX_BUNDLE_ID'].empty?)
+      ["command -v cmux >/dev/null 2>&1 && cmux rename-tab #{q(label)} >/dev/null 2>&1 || true"]
+    else
+      []
+    end
+  end
+
   def script_cd(path)
-    ["touch #{q(path)}", "echo #{q(path)}", "cd #{q(path)}"]
+    ["touch #{q(path)}", "echo #{q(path)}", "cd #{q(path)}"] + terminal_rename_commands(path)
   end
 
   def script_mkdir_cd(path)
@@ -1619,6 +1747,17 @@ if __FILE__ == $0
 
   def script_clone(path, uri)
     ["mkdir -p #{q(path)}", "echo #{q("Using git clone to create this trial from #{uri}.")}", "git clone '#{uri}' #{q(path)}"] + script_cd(path)
+  end
+
+  def script_clone_pr(path, uri, pr_id)
+    ref = "pull/#{pr_id}/head"
+    [
+      "mkdir -p #{q(path)}",
+      "echo #{q("Using git clone to create this trial from #{uri} PR ##{pr_id}.")}",
+      "git clone #{q(uri)} #{q(path)}",
+      "git -C #{q(path)} fetch origin #{q(ref)}",
+      "git -C #{q(path)} checkout --detach FETCH_HEAD"
+    ] + script_cd(path)
   end
 
   def script_worktree(path, repo = nil)
@@ -1678,7 +1817,7 @@ if __FILE__ == $0
       "mv #{q(old_name)} #{q(new_name)}",
       "echo #{q(new_path)}",
       "cd #{q(new_path)}"
-    ]
+    ] + terminal_rename_commands(new_path)
   end
 
   # Return a unique directory name under tries_path by appending -2, -3, ... if needed
@@ -1699,9 +1838,9 @@ if __FILE__ == $0
     initial = "#{date_prefix}-#{base}"
     return base unless Dir.exist?(File.join(tries_path, initial))
 
-    m = base.match(/^(.*?)(\d+)$/)
-    if m
-      stem, n = m[1], m[2].to_i
+    if base =~ /^(.*?)(\d+)$/
+      stem = $1.to_s
+      n = $2.to_i
       candidate_num = n + 1
       loop do
         candidate_base = "#{stem}#{candidate_num}"
@@ -1718,10 +1857,11 @@ if __FILE__ == $0
   # shell detection for init wrapper
   # Check $SHELL first (user's configured shell), then parent process as fallback
   def fish?
-    shell = ENV["SHELL"]
-    shell = `ps c -p #{Process.ppid} -o 'ucomm='`.strip rescue nil if shell.to_s.empty?
-
-    shell&.include?('fish')
+    shell = ENV["SHELL"].to_s
+    if shell.empty?
+      shell = (`ps c -p #{Process.ppid} -o 'ucomm='`.strip rescue "").to_s
+    end
+    shell.include?('fish')
   end
 
 

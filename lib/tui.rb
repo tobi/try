@@ -7,14 +7,16 @@ require "io/console"
 # Usage pattern:
 #   include Tui::Helpers
 #   screen = Tui::Screen.new
-#   screen.header.add_line { |line| line.write << Tui::Text.bold("📁 Try Selector") }
+#   line = screen.header.add_line
+#   line.write << Tui::Text.bold("📁 Try Selector")
 #   search_line = screen.body.add_line
 #   search_line.write_dim("Search:").write(" ")
 #   search_line.write << screen.input("Type to filter…", value: query, cursor: cursor)
 #   list_line = screen.body.add_line(background: Tui::Palette::SELECTED_BG)
 #   list_line.write << Tui::Text.highlight("→ ") << name
 #   list_line.right.write_dim(metadata)
-#   screen.footer.add_line { |line| line.write_dim("↑↓ navigate  Enter select  Esc cancel") }
+#   line = screen.footer.add_line
+#   line.write_dim("↑↓ navigate  Enter select  Esc cancel")
 #   screen.flush
 #
 # The screen owns a single InputField (enforced by #input). Lines support
@@ -90,14 +92,15 @@ module Tui
   module Palette
     HEADER      = ANSI.sgr(1, "38;5;114")
     ACCENT      = ANSI.sgr(1, "38;5;214")
-    HIGHLIGHT   = "\e[1;33m"  # Bold yellow (matches C version)
+    HIGHLIGHT   = "\e[1;33m"  # Bold yellow remains readable on the controlled selected background
     MUTED       = ANSI.fg(245)
     MATCH       = ANSI.sgr(1, "38;5;226")
     INPUT_HINT  = ANSI.fg(244)
     INPUT_CURSOR_ON  = "\e[7m"
     INPUT_CURSOR_OFF = "\e[27m"
 
-    SELECTED_BG = ANSI.bg(238)
+    SELECTED_BG = ANSI.bg(238) # Preserve the dark selected-row appearance
+    SELECTED_FG = ANSI.fg(255) # Keep selected content readable on every theme
     DANGER_BG   = ANSI.bg(52)
   end
 
@@ -123,8 +126,8 @@ module Tui
 
       # Slow path: calculate width per codepoint (avoids each_char + ord)
       width = 0
-      stripped.each_codepoint do |code|
-        width += char_width(code)
+      stripped.each_char do |ch|
+        width += char_width(ch.ord)
       end
       width
     end
@@ -321,24 +324,17 @@ module Tui
 
           begin
             s_rows, s_cols = stream.winsize
-            rows ||= s_rows
-            cols ||= s_cols
+            # Spinel returns [0,0] for non-ttys (no exception). 0 is truthy in
+            # Ruby, so treat non-positive sizes as missing.
+            rows ||= s_rows if s_rows.to_i > 0
+            cols ||= s_cols if s_cols.to_i > 0
           rescue IOError, Errno::ENOTTY, Errno::EOPNOTSUPP, Errno::ENODEV
             next
           end
         end
 
-        if (!rows || !cols)
-          begin
-            console = IO.console
-            if console
-              c_rows, c_cols = console.winsize
-              rows ||= c_rows
-              cols ||= c_cols
-            end
-          rescue IOError, Errno::ENOTTY, Errno::EOPNOTSUPP, Errno::ENODEV
-          end
-        end
+        # IO.console is not available under Spinel; STDERR/STDIN#winsize
+        # (io/console) already covers the TTY case above.
 
         rows ||= 24
         cols ||= 80
@@ -399,7 +395,7 @@ module Tui
           cursor_row = current_row + 1
           cursor_col = line.cursor_column(@input_field, @width)
         end
-        line.render(buf, @width)
+        buf << line.render(nil, @width)
         current_row += 1
       end
 
@@ -415,7 +411,7 @@ module Tui
           cursor_row = current_row + 1
           cursor_col = line.cursor_column(@input_field, @width)
         end
-        line.render(buf, @width)
+        buf << line.render(nil, @width)
         current_row += 1
         body_rendered += 1
       end
@@ -425,7 +421,8 @@ module Tui
       gap = body_space - body_rendered
       blank_line = "\r#{ANSI::CLEAR_EOL}#{' ' * (@width - 1)}\n"
       blank_line_no_newline = "\r#{ANSI::CLEAR_EOL}#{' ' * (@width - 1)}"
-      gap.times do |i|
+      i = 0
+      while i < gap
         # Last gap line without newline if no footer follows
         if i == gap - 1 && @footer.lines.empty?
           buf << blank_line_no_newline
@@ -433,6 +430,7 @@ module Tui
           buf << blank_line
         end
         current_row += 1
+        i += 1
       end
 
       # Render footer at the bottom (sticky)
@@ -443,9 +441,9 @@ module Tui
         end
         # Last line: don't write \n to avoid scrolling
         if idx == footer_lines - 1
-          line.render_no_newline(buf, @width)
+          buf << line.render_no_newline(nil, @width)
         else
-          line.render(buf, @width)
+          buf << line.render(nil, @width)
         end
         current_row += 1
       end
@@ -479,7 +477,7 @@ module Tui
       @lines = []
     end
 
-    def add_line(background: nil, truncate: true)
+    def add_line(background = nil, truncate = true)
       line = Line.new(@screen, background: background, truncate: truncate)
       @lines << line
       yield line if block_given?
@@ -489,7 +487,7 @@ module Tui
     def divider(char: '─')
       add_line do |line|
         span = [@screen.width - 1, 1].max
-        line.write << char * span
+        line.write.write(char * span)
       end
     end
 
@@ -631,7 +629,8 @@ module Tui
       buffer << ANSI::RESET
       buffer << "\n" if trailing_newline
 
-      io << buffer
+      io << buffer if io
+      buffer
     end
   end
 
@@ -641,13 +640,13 @@ module Tui
     class FillSegment
       attr_reader :char, :style
 
-      def initialize(char, style: nil)
+      def initialize(char, style = nil)
         @char = char.to_s
         @style = style
       end
 
       def with_style(style)
-        self.class.new(char, style: style)
+        FillSegment.new(char, style)
       end
     end
 
@@ -660,8 +659,8 @@ module Tui
         # Precompute: emoji = 2, variation selectors = 0
         @width = 0
         @char_count = 0
-        @char.each_codepoint do |code|
-          w = Metrics.char_width(code)
+        @char.each_char do |ch|
+          w = Metrics.char_width(ch.ord)
           @width += w
           @char_count += 1 if w > 0  # Don't count zero-width chars
         end
@@ -713,15 +712,27 @@ module Tui
     alias << write
 
     def write_dim(text)
-      write(style_segment(text, :dim) { |value| dim(value) })
+      if text.is_a?(FillSegment)
+        write(text.with_style(:dim))
+      else
+        write(dim(text))
+      end
     end
 
     def write_bold(text)
-      write(style_segment(text, :bold) { |value| bold(value) })
+      if text.is_a?(FillSegment)
+        write(text.with_style(:bold))
+      else
+        write(bold(text))
+      end
     end
 
     def write_highlight(text)
-      write(style_segment(text, :highlight) { |value| highlight(value) })
+      if text.is_a?(FillSegment)
+        write(text.with_style(:highlight))
+      else
+        write(highlight(text))
+      end
     end
 
     def to_s(width: nil)
@@ -801,13 +812,140 @@ module Tui
   end
 
   class InputField
-    attr_accessor :text, :cursor
-    attr_reader :placeholder
+    attr_reader :placeholder, :text, :cursor
 
-    def initialize(placeholder:, text:, cursor: nil)
+    def initialize(placeholder: "", text: "", cursor: nil)
       @placeholder = placeholder
       @text = text.to_s.dup
-      @cursor = cursor.nil? ? @text.length : [[cursor, 0].max, @text.length].min
+      @cursor = cursor.nil? ? @text.length : cursor.to_i
+      clamp_cursor!
+    end
+
+    def text=(value)
+      @text = value.to_s.dup
+      clamp_cursor!
+    end
+
+    def cursor=(pos)
+      @cursor = pos.to_i
+      clamp_cursor!
+    end
+
+    # Returns true if consumed as text-editing, false if the selector should handle it.
+    def handle_key(key)
+      return false if key.nil? || key.empty?
+
+      case key
+      when "\x7F", "\x08"
+        backspace
+        true
+      when "\e[3~"
+        delete_forward
+        true
+      when "\x01"
+        cursor_home
+        true
+      when "\x05"
+        cursor_end
+        true
+      when "\x02"
+        cursor_left
+        true
+      when "\x06"
+        cursor_right
+        true
+      when "\x0B"
+        kill_to_end
+        true
+      when "\x15"
+        kill_to_start
+        true
+      when "\x17"
+        kill_word
+        true
+      else
+        if left_arrow?(key)
+          cursor_left
+          true
+        elsif right_arrow?(key)
+          cursor_right
+          true
+        elsif home_key?(key)
+          cursor_home
+          true
+        elsif end_key?(key)
+          cursor_end
+          true
+        elsif key.length == 1
+          code = key.ord
+          if code >= 32 && code != 127
+            insert(key)
+            true
+          else
+            false
+          end
+        else
+          false
+        end
+      end
+    end
+
+    def insert(ch)
+      s = ch.to_s
+      return if s.empty?
+      @text = @text[0...@cursor].to_s + s + @text[@cursor..].to_s
+      @cursor += 1
+    end
+
+    def backspace
+      return if @cursor <= 0
+      @text = @text[0...(@cursor - 1)].to_s + @text[@cursor..].to_s
+      @cursor -= 1
+    end
+
+    def delete_forward
+      return if @cursor >= @text.length
+      @text = @text[0...@cursor].to_s + @text[(@cursor + 1)..].to_s
+    end
+
+    def kill_to_end
+      @text = @text[0...@cursor].to_s
+    end
+
+    def kill_to_start
+      @text = @text[@cursor..].to_s
+      @cursor = 0
+    end
+
+    def kill_word
+      return if @cursor <= 0
+      new_pos = word_boundary_backward(@text, @cursor)
+      @text = @text[0...new_pos].to_s + @text[@cursor..].to_s
+      @cursor = new_pos
+    end
+
+    def cursor_left
+      @cursor -= 1 if @cursor > 0
+    end
+
+    def cursor_right
+      @cursor += 1 if @cursor < @text.length
+    end
+
+    def cursor_home
+      @cursor = 0
+    end
+
+    def cursor_end
+      @cursor = @text.length
+    end
+
+    # Alphanumeric word boundary (Ctrl-W). Skips separators, then the word.
+    def word_boundary_backward(buffer, cursor)
+      pos = cursor - 1
+      pos -= 1 while pos >= 0 && !alnum_char?(buffer[pos])
+      pos -= 1 while pos >= 0 && alnum_char?(buffer[pos])
+      pos + 1
     end
 
     def to_s
@@ -831,5 +969,36 @@ module Tui
     def render_placeholder
       Text.dim(placeholder)
     end
+
+    def clamp_cursor!
+      @cursor = 0 if @cursor < 0
+      @cursor = @text.length if @cursor > @text.length
+    end
+
+    # Avoid Regexp#match? on control bytes (Spinel can SIGSEGV).
+    def alnum_char?(ch)
+      return false if ch.nil? || ch.empty?
+      c = ch.ord
+      (c >= 48 && c <= 57) || (c >= 65 && c <= 90) || (c >= 97 && c <= 122)
+    end
+
+    def left_arrow?(key)
+      return true if key == "\e[D" || key == "\eOD"
+      key.start_with?("\e[") && key.end_with?("D") && key.length > 3
+    end
+
+    def right_arrow?(key)
+      return true if key == "\e[C" || key == "\eOC"
+      key.start_with?("\e[") && key.end_with?("C") && key.length > 3
+    end
+
+    def home_key?(key)
+      key == "\e[H" || key == "\e[1~" || key == "\e[7~" || key == "\eOH"
+    end
+
+    def end_key?(key)
+      key == "\e[F" || key == "\e[4~" || key == "\e[8~" || key == "\eOF"
+    end
   end
+
 end

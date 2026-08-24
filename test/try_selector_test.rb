@@ -280,7 +280,7 @@ class GetTriesCachingTest < TrySelectorTestCase
     FileUtils.mkdir_p(File.join(@tmpdir, "mydir"))
     sel = build_selector
     first = sel.send(:get_tries)
-    sel.instance_variable_set(:@input_buffer, "my")
+    sel.instance_variable_get(:@search).text = "my"
     second = sel.send(:get_tries)
     refute_same first, second
   end
@@ -335,6 +335,60 @@ class FormattedEntryNameTest < TrySelectorTestCase
   end
 end
 
+class SelectedEntryRenderingTest < TrySelectorTestCase
+  def selector
+    @sel ||= build_selector
+  end
+
+  def test_selected_entry_does_not_use_fixed_muted_foreground
+    Tui.enable_colors!
+    screen = Tui::Screen.new(io: StringIO.new, width: 80, height: 5)
+    entry = TrySelector::TryEntry.new(
+      {
+        basename: "2024-01-15-project",
+        text: "2024-01-15-project",
+        path: File.join(@tmpdir, "2024-01-15-project"),
+        is_symlink: false,
+        mtime: Time.now,
+        highlight_positions: [11]
+      },
+      1.0,
+      []
+    )
+
+    selector.send(:render_entry_line, screen, entry, true, 80)
+    output = StringIO.new
+    screen.body.lines.first.render(output, 80)
+
+    assert_includes output.string, Tui::Palette::SELECTED_BG
+    assert_includes output.string, Tui::Palette::SELECTED_FG
+    assert_includes output.string, Tui::Palette::HIGHLIGHT
+    refute_includes output.string, Tui::Palette::MUTED
+    arrow_end = output.string.index("→ ") + 2
+    icon_start = output.string.index("📁")
+    fg_after_arrow = output.string.index(Tui::Palette::SELECTED_FG, arrow_end)
+    assert_operator fg_after_arrow, :<, icon_start
+    match_start = output.string.rindex(Tui::Palette::HIGHLIGHT)
+    fg_after_match = output.string.index(Tui::Palette::SELECTED_FG, match_start + 1)
+    assert fg_after_match, "selected foreground should be restored after a highlighted name"
+  end
+
+  def test_selected_create_row_restores_foreground
+    Tui.enable_colors!
+    screen = Tui::Screen.new(io: StringIO.new, width: 80, height: 5)
+    selector.instance_variable_get(:@search).text = "new-entry"
+
+    selector.send(:render_create_line, screen, true, 80)
+    output = StringIO.new
+    screen.body.lines.first.render(output, 80)
+
+    arrow_end = output.string.index("→ ") + 2
+    icon_start = output.string.index("📂")
+    fg_after_arrow = output.string.index(Tui::Palette::SELECTED_FG, arrow_end)
+    assert_operator fg_after_arrow, :<, icon_start
+  end
+end
+
 # -------------------------------------------------------------------
 # finalize_rename
 # -------------------------------------------------------------------
@@ -380,3 +434,28 @@ class FinalizeRenameTest < TrySelectorTestCase
     assert_equal "brand-new", selected[:new]
   end
 end
+
+# -------------------------------------------------------------------
+# setup_terminal — SIGWINCH guard (cross-platform)
+# -------------------------------------------------------------------
+class SetupTerminalWinchGuardTest < TrySelectorTestCase
+  # On platforms without SIGWINCH (e.g. Windows Ruby, RUBY_PLATFORM
+  # x64-mingw-ucrt), Signal.list has no "WINCH" key and Signal.trap('WINCH')
+  # raises ArgumentError: unsupported signal. setup_terminal must not crash
+  # there. Simulate that platform by stubbing Signal.list to omit WINCH.
+  def test_no_raise_when_winch_unsupported
+    sel = build_selector
+    without_winch = Signal.list.reject { |name, _| name == "WINCH" }
+    original_list = Signal.method(:list)
+    Signal.define_singleton_method(:list) { without_winch }
+    begin
+      sel.send(:setup_terminal) # must not raise
+    ensure
+      Signal.define_singleton_method(:list, original_list)
+      sel&.send(:restore_terminal)
+    end
+    # Guard skipped the trap, so no handler was captured.
+    assert_nil sel.instance_variable_get(:@old_winch_handler)
+  end
+end
+

@@ -116,3 +116,32 @@ l: lint ## Shortcut for lint
 
 .PHONY: i
 i: install ## Shortcut for install
+
+# Native binary via Spinel (optional)
+SPINEL ?= spinel
+SPINEL_FLAGS ?= -O s
+CC ?= cc
+NATIVE = dist/try
+NATIVE_C = dist/try.c
+SPINEL_BIN := $(shell command -v $(SPINEL) 2>/dev/null)
+SPINEL_LIB ?= $(dir $(SPINEL_BIN))../lib
+
+.PHONY: native native-test native-compare
+native: $(NATIVE)
+
+$(NATIVE_C): try.rb lib/tui.rb lib/fuzzy.rb
+	mkdir -p dist
+	$(SPINEL) $(SPINEL_FLAGS) -c try.rb -o $(NATIVE_C)
+
+$(NATIVE): $(NATIVE_C)
+	$(CC) -Os -Wno-all -ffunction-sections -fdata-sections \
+		-I$(SPINEL_LIB) -I$(SPINEL_LIB)/regexp \
+		$(NATIVE_C) $(SPINEL_LIB)/libspinel_rt.a \
+		-lm -lcrypt -Wl,--gc-sections -o $(NATIVE)
+	strip $(NATIVE)
+
+native-test: $(NATIVE)
+	bash spec/tests/runner.sh $(NATIVE)
+
+native-compare: $(NATIVE)
+	bash spec/tests/runner_and_compare.sh ./try.rb $(NATIVE)
