@@ -1177,6 +1177,7 @@ if $0 == __FILE__ || TryCompat.compiled_binary?
         try                   Open interactive selector
         try project           Selector with initial filter
         try clone https://github.com/user/repo
+        try repo 2026-05-16-my-app
         try https://github.com/user/repo/pull/123
         try worktree feature-branch
 
