@@ -464,7 +464,7 @@ class TrySelector
         line.write.write(" #{@marked_for_deletion.length} marked  |  Ctrl-D: Toggle  Enter: Confirm  Esc: Cancel")
     else
       line = screen.footer.add_line
-        line.center.write_dim("↑/↓: Navigate  Enter: Select  ^R: Rename  ^G: Graduate  ^D: Delete  Esc: Cancel")
+        line.center.write_dim("↑/↓: Navigate  Enter: Select  ^R: Rename  ^G: Graduate  ^U: Repo  ^D: Delete  Esc: Cancel")
     end
 
     # Calculate max visible from actual header/footer counts
