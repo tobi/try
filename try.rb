@@ -884,7 +884,7 @@ class TrySelector
       full_path = File.join(@base_path, final_name)
 
       @selected = { type: :mkdir, path: full_path }
-      end
+    end
   end
 
   def confirm_batch_delete(tries)
@@ -1248,7 +1248,7 @@ if $0 == __FILE__ || TryCompat.compiled_binary?
 
   def cmd_clone!(args, tries_path)
     git_uri = args.shift
-    custom_name = args.shift
+    custom_name = args.join(" ")
 
     unless git_uri
       warn "Error: git URI required for clone command"
