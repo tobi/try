@@ -11,7 +11,7 @@ The shell function wrapper is necessary because:
 
 ## Shell Detection
 
-The init command should detect the shell that invokes it from the parent process and output the appropriate function syntax. If the parent process cannot be determined, it should fall back to the user's configured shell in `$SHELL`.
+The init command should detect the shell that invokes it from the parent process and output the appropriate function syntax. If the parent process cannot be determined or is not a shell, it should fall back to the user's configured shell in `$SHELL`.
 
 Supported shells:
 - **Bash/Zsh**: POSIX-compatible function syntax

@@ -31,6 +31,15 @@ if echo "$output" | grep -q "function try"; then
 else
     fail "SHELL=fish should be the fallback" "function try" "$output" "shell_init"
 fi
+
+# Test: a non-shell parent (e.g. a script runner) is ignored in favor of SHELL
+printf '#!/bin/sh\nprintf "ruby\\n"\n' > "$FAKE_PS_DIR/ps"
+output=$(PATH="$FAKE_PS_DIR:$PATH" SHELL=/usr/local/bin/fish try_run init "$TEST_TRIES" 2>&1)
+if echo "$output" | grep -q "function try"; then
+    pass
+else
+    fail "non-shell parent should fall back to SHELL=fish" "function try" "$output" "shell_init"
+fi
 rm -rf "$FAKE_PS_DIR"
 
 # Test: SHELL=zsh emits bash/zsh function

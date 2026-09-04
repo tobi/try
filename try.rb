@@ -1642,10 +1642,10 @@ if $0 == __FILE__ || TryCompat.compiled_binary?
   end
 
   # shell detection for init wrapper
-  # Check the invoking shell first, then fall back to the user's configured shell
+  # Check the invoking shell first; fall back to $SHELL when the parent isn't a shell
   def fish?
     shell = (`ps c -p #{Process.ppid} -o 'ucomm=' 2>/dev/null`.strip rescue "").to_s
-    shell = ENV["SHELL"].to_s if shell.empty?
+    shell = ENV["SHELL"].to_s unless shell.match?(/\A-?\w*sh\z/)
     shell.include?('fish')
   end
 
