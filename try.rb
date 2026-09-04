@@ -1642,12 +1642,10 @@ if $0 == __FILE__ || TryCompat.compiled_binary?
   end
 
   # shell detection for init wrapper
-  # Check $SHELL first (user's configured shell), then parent process as fallback
+  # Check the invoking shell first, then fall back to the user's configured shell
   def fish?
-    shell = ENV["SHELL"].to_s
-    if shell.empty?
-      shell = (`ps c -p #{Process.ppid} -o 'ucomm='`.strip rescue "").to_s
-    end
+    shell = (`ps c -p #{Process.ppid} -o 'ucomm=' 2>/dev/null`.strip rescue "").to_s
+    shell = ENV["SHELL"].to_s if shell.empty?
     shell.include?('fish')
   end
 
