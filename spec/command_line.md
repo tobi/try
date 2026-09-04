@@ -192,7 +192,7 @@ When `HERDR_ENV=1` and `HERDR_PANE_ID` are present, the script includes a guarde
 | Variable | Description |
 |----------|-------------|
 | `HOME` | Used to resolve default tries path (`$HOME/src/tries`) |
-| `SHELL` | Used by `init` to detect shell type |
+| `SHELL` | Fallback used by `init` when the invoking shell cannot be detected |
 | `NO_COLOR` | If set, disables colors (equivalent to `--no-colors`) |
 | `HERDR_ENV`, `HERDR_PANE_ID`, `HERDR_WORKSPACE_ID` | Identify the current Herdr panel and workspace for renaming |
 | `CMUX_SOCKET_PATH`, `CMUX_BUNDLE_ID` | Identify cmux for tab renaming |

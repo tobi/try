@@ -3,13 +3,44 @@
 
 section "shell-init"
 
-# Test: SHELL=fish emits fish function
-output=$(SHELL=/usr/local/bin/fish try_run init "$TEST_TRIES" 2>&1)
+# Test: the invoking shell takes precedence over the login shell in $SHELL
+FAKE_PS_DIR=$(mktemp -d)
+printf '#!/bin/sh\nprintf "fish\\n"\n' > "$FAKE_PS_DIR/ps"
+chmod +x "$FAKE_PS_DIR/ps"
+output=$(PATH="$FAKE_PS_DIR:$PATH" SHELL=/bin/zsh try_run init "$TEST_TRIES" 2>&1)
 if echo "$output" | grep -q "function try"; then
     pass
 else
-    fail "SHELL=fish should emit fish function" "function try" "$output" "shell_init"
+    fail "fish parent should override SHELL=zsh" "function try" "$output" "shell_init"
 fi
+
+# Test: a non-fish parent also takes precedence over SHELL=fish
+printf '#!/bin/sh\nprintf "zsh\\n"\n' > "$FAKE_PS_DIR/ps"
+output=$(PATH="$FAKE_PS_DIR:$PATH" SHELL=/usr/local/bin/fish try_run init "$TEST_TRIES" 2>&1)
+if echo "$output" | grep -q "try() {"; then
+    pass
+else
+    fail "zsh parent should override SHELL=fish" "try() {" "$output" "shell_init"
+fi
+
+# Test: SHELL is used when the parent shell cannot be detected
+printf '#!/bin/sh\n' > "$FAKE_PS_DIR/ps"
+output=$(PATH="$FAKE_PS_DIR:$PATH" SHELL=/usr/local/bin/fish try_run init "$TEST_TRIES" 2>&1)
+if echo "$output" | grep -q "function try"; then
+    pass
+else
+    fail "SHELL=fish should be the fallback" "function try" "$output" "shell_init"
+fi
+
+# Test: a non-shell parent (e.g. a script runner) is ignored in favor of SHELL
+printf '#!/bin/sh\nprintf "ruby\\n"\n' > "$FAKE_PS_DIR/ps"
+output=$(PATH="$FAKE_PS_DIR:$PATH" SHELL=/usr/local/bin/fish try_run init "$TEST_TRIES" 2>&1)
+if echo "$output" | grep -q "function try"; then
+    pass
+else
+    fail "non-shell parent should fall back to SHELL=fish" "function try" "$output" "shell_init"
+fi
+rm -rf "$FAKE_PS_DIR"
 
 # Test: SHELL=zsh emits bash/zsh function
 output=$(SHELL=/bin/zsh try_run init "$TEST_TRIES" 2>&1)

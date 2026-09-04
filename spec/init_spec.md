@@ -11,7 +11,7 @@ The shell function wrapper is necessary because:
 
 ## Shell Detection
 
-The init command should detect the user's shell via the `$SHELL` environment variable and output the appropriate function syntax.
+The init command should detect the shell that invokes it from the parent process and output the appropriate function syntax. If the parent process cannot be determined or is not a shell, it should fall back to the user's configured shell in `$SHELL`.
 
 Supported shells:
 - **Bash/Zsh**: POSIX-compatible function syntax
@@ -96,8 +96,8 @@ Test that init produces valid shell syntax:
 # Test Bash syntax
 bash -n <(try init)
 
-# Test Fish syntax (if fish is available)
-fish -n <(SHELL=/usr/bin/fish try init)
+# Test Fish syntax, even when the login shell is different
+env SHELL=/bin/zsh fish -c 'try init | fish --no-execute'
 ```
 
 Test that the wrapper works correctly:

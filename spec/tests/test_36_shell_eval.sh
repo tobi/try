@@ -65,7 +65,7 @@ fi
 
 if command -v nix-shell >/dev/null 2>&1; then
     # Test: fish can eval the init output and defines try function
-    fish_out=$(nix-shell -p fish --run "SHELL=fish fish -c 'eval ($TRY_BIN_PATH init --path $EVAL_DIR | string collect); type try'" 2>&1)
+    fish_out=$(nix-shell -p fish --run "SHELL=/bin/zsh fish -c 'eval ($TRY_BIN_PATH init --path $EVAL_DIR | string collect); type try'" 2>&1)
     if echo "$fish_out" | grep -qi "try is a function\|function try"; then
         pass
     else
@@ -81,7 +81,7 @@ if command -v nix-shell >/dev/null 2>&1; then
     fi
 
     # Test: fish init output is valid fish syntax (no parse errors)
-    fish_syntax=$(SHELL=fish "$TRY_BIN_PATH" init --path "$EVAL_DIR" 2>&1)
+    fish_syntax=$(nix-shell -p fish --run "SHELL=/bin/zsh fish -c '$TRY_BIN_PATH init --path $EVAL_DIR'" 2>&1)
     fish_parse=$(echo "$fish_syntax" | nix-shell -p fish --run "fish --no-execute" 2>&1)
     if [ $? -eq 0 ]; then
         pass
