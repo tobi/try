@@ -192,6 +192,8 @@ When `HERDR_ENV=1` and `HERDR_PANE_ID` are present, the script includes a guarde
 | Variable | Description |
 |----------|-------------|
 | `HOME` | Used to resolve default tries path (`$HOME/src/tries`) |
+| `TRY_PATH` | Overrides the tries directory |
+| `TRY_PROJECTS` | One or more graduation parent directories, separated by the platform path separator |
 | `SHELL` | Used by `init` to detect shell type |
 | `NO_COLOR` | If set, disables colors (equivalent to `--no-colors`) |
 | `HERDR_ENV`, `HERDR_PANE_ID`, `HERDR_WORKSPACE_ID` | Identify the current Herdr panel and workspace for renaming |
@@ -202,6 +204,7 @@ When `HERDR_ENV=1` and `HERDR_PANE_ID` are present, the script includes a guarde
 - **Tries directory**: `~/src/tries`
 - **Date format**: `YYYY-MM-DD`
 - **Directory naming**: `YYYY-MM-DD-<name>`
+- **Graduation parent**: first `TRY_PROJECTS` entry, or the parent of `TRY_PATH`
 
 ## Color Output
 

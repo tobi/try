@@ -213,6 +213,7 @@ Tokens are preserved intact - never split a `{b}...{/b}` pair.
 | Enter | Select current entry |
 | Esc / Ctrl-C | Cancel selection |
 | Ctrl-D | Delete selected directory |
+| Ctrl-G | Open the graduation dialog |
 
 ### Line Editing (in search input)
 | Key | Action |
@@ -243,6 +244,7 @@ Selection can result in three action types:
 | CD | Select existing directory | Navigate to directory |
 | MKDIR | Select "[new]" entry | Create and navigate to new directory |
 | DELETE | Press Ctrl-D on entry | Show delete confirmation dialog |
+| GRADUATE | Press Ctrl-G | Move the selected try to a project directory and leave a symlink |
 | CANCEL | Press Esc | Exit without action |
 
 ## New Directory Creation

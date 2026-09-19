@@ -13,8 +13,8 @@
 - `try worktree dir [name]`: Same as above but explicit CLI, useful without the shell wrapper.
 - `try clone <git-uri> [name]`: Clones into the root. Default name is `YYYY-MM-DD-user-repo` (strips `.git`). Optional `name` overrides.
 - Flags: `--path PATH` (for `cd`/`clone`) overrides the root for that call; `--help` prints global help.
-- Environment: `TRY_PATH` sets the default root when not using `--path`. `TRY_PROJECTS` sets the graduate destination (default: parent of `TRY_PATH`).
-- UI keys: `↑/↓` or `Ctrl-P/N` navigate, `Enter` select, `Backspace` delete char, `Ctrl-D` delete dir (requires typing `YES`), `Ctrl-G` graduate (promote try to project), `Ctrl-R` rename, `ESC` cancel.
+- Environment: `TRY_PATH` sets the default root when not using `--path`. `TRY_PROJECTS` sets one or more graduate parents, separated by `:` (default: parent of `TRY_PATH`).
+- UI keys: `↑/↓` or `Ctrl-P/N` navigate, `Enter` select, `Backspace` delete char, `Ctrl-D` delete dir (requires typing `YES`), `Ctrl-G` graduate (promote try to project), `Ctrl-R` rename, `ESC` cancel. In the graduation dialog, `↑/↓` cycle configured parents.
 
 ### Shorthands and Worktrees
 - `try .`: Creates a new date-prefixed directory using the current working directory’s basename. If inside a Git repo, a detached worktree is added; otherwise this is a plain directory.
