@@ -222,4 +222,71 @@ else
     fail "Should strip YYYY-MM-DD- prefix from various dates" "year-end" "$output" "graduate"
 fi
 
-rm -rf "$GRAD_DIR" "$PROJ_DIR" "$NO_DATE_DIR" "$WT_DIR" "$EDIT_DIR" "$E2E_DIR" "$E2E_DEST" "$REG_DIR" "$MULTI_DIR"
+# Test: Arrow keys cycle through a configured TRY_PROJECTS path list
+PARENT_ONE=$(mktemp -d)
+PARENT_TWO=$(mktemp -d)
+LIST_DIR=$(mktemp -d)
+mkdir -p "$LIST_DIR/2025-06-01-list-selection"
+output=$(TRY_PROJECTS="$PARENT_ONE:$PARENT_TWO" try_run --path="$LIST_DIR" --and-keys='CTRL-G,DOWN,ENTER' exec 2>/dev/null)
+if echo "$output" | grep -q "$PARENT_TWO/list-selection"; then
+    pass
+else
+    fail "Down arrow should select the next configured graduation parent" "$PARENT_TWO/list-selection" "$output" "graduate"
+fi
+
+# Test: Graduation dialog lists all configured parents
+ui_output=$(TRY_PROJECTS="$PARENT_ONE:$PARENT_TWO" try_run --path="$LIST_DIR" --and-keys='CTRL-G,ESC' exec 2>&1)
+if echo "$ui_output" | grep -Fq "$(basename "$PARENT_ONE")" && echo "$ui_output" | grep -Fq "$(basename "$PARENT_TWO")"; then
+    pass
+else
+    fail "Graduation dialog should show every configured parent" "$PARENT_ONE and $PARENT_TWO" "$ui_output" "graduate"
+fi
+
+# Test: The non-shared parent path portion is bold
+if printf '%s' "$ui_output" | grep -q $'\033\\[1m'; then
+    pass
+else
+    fail "Graduation dialog should bold the distinct parent path portion" "ANSI bold sequence" "$ui_output" "graduate"
+fi
+
+# Test: Contextual parent help uses bold arrow icons
+if echo "$ui_output" | grep -q "↑↓.*select parent,.*←→.*edit"; then
+    pass
+else
+    fail "Graduation dialog should show parent selection and editing help" "↑↓ select parent, ←→ edit" "$ui_output" "graduate"
+fi
+
+# Test: Old parent label and counter wording are gone
+if echo "$ui_output" | grep -qE "Project parents|Parent [0-9]+/[0-9]+|↑/↓: Parent|←/→: Edit"; then
+    fail "Graduation dialog should not show the old parent label or counters" "no old parent wording" "$ui_output" "graduate"
+else
+    pass
+fi
+
+# Test: Confirm/cancel help remains in the footer
+if echo "$ui_output" | grep -q "Enter: Confirm.*Esc: Cancel"; then
+    pass
+else
+    fail "Graduation dialog should keep confirm and cancel help" "Enter: Confirm  Esc: Cancel" "$ui_output" "graduate"
+fi
+
+# Test: Paths under HOME use a compact ~ display form
+HOME_TEST=$(mktemp -d)
+HOME_LIST_DIR=$(mktemp -d)
+mkdir -p "$HOME_TEST/products" "$HOME_TEST/js" "$HOME_LIST_DIR/2025-06-01-home-display"
+home_ui=$(HOME="$HOME_TEST" TRY_PROJECTS="$HOME_TEST/products:$HOME_TEST/js" try_run --path="$HOME_LIST_DIR" --and-keys='CTRL-G,ESC' exec 2>&1)
+if echo "$home_ui" | grep -Fq "products" && echo "$home_ui" | grep -Fq "js"; then
+    pass
+else
+    fail "Graduation dialog should abbreviate HOME paths" "~/products and ~/js" "$home_ui" "graduate"
+fi
+
+# Test: Parent cycling preserves a manually edited project name
+output=$(TRY_PROJECTS="$PARENT_ONE:$PARENT_TWO" try_run --path="$LIST_DIR" --and-keys="CTRL-G,CTRL-A,CTRL-K,TYPE=custom-name,DOWN,ENTER" exec 2>/dev/null)
+if echo "$output" | grep -q "$PARENT_TWO/custom-name"; then
+    pass
+else
+    fail "Changing parent should preserve the edited project name" "$PARENT_TWO/custom-name" "$output" "graduate"
+fi
+
+rm -rf "$GRAD_DIR" "$PROJ_DIR" "$NO_DATE_DIR" "$WT_DIR" "$EDIT_DIR" "$E2E_DIR" "$E2E_DEST" "$REG_DIR" "$MULTI_DIR" "$PARENT_ONE" "$PARENT_TWO" "$LIST_DIR" "$HOME_TEST" "$HOME_LIST_DIR"

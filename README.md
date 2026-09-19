@@ -195,6 +195,7 @@ automatically removed from URLs when generating directory names.
 - `Enter` - Select or create
 - `Backspace` - Delete character
 - `Ctrl-D` - Delete directory (with confirmation)
+- `Ctrl-G` - Graduate a try into a project
 - `ESC` - Cancel
 - Just type to filter
 
@@ -206,7 +207,11 @@ Set `TRY_PATH` to change where experiments are stored:
 export TRY_PATH=~/code/sketches
 ```
 
-Default: `~/src/tries`
+`TRY_PROJECTS` optionally sets colon-separated graduation parent directories,
+for example `$HOME/src/projects:$HOME/src/client-work`. It defaults to the
+parent of `TRY_PATH`.
+
+Default `TRY_PATH`: `~/src/tries`
 
 ## Nix
 

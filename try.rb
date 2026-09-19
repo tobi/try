@@ -745,21 +745,32 @@ class TrySelector
     # Strip date prefix for the default project name
     project_name = current_name.sub(/^\d{4}-\d{2}-\d{2}-/, '')
 
-    # Compute default destination directory
-    projects_dir = if TRY_PROJECTS
-      File.expand_path(TRY_PROJECTS)
-    else
-      File.dirname(@base_path)
-    end
-
-    input = Tui::InputField.new(placeholder: "", text: File.join(projects_dir, project_name))
+    # TRY_PROJECTS is a platform-separated list of graduation parents.
+    parent_paths = graduation_parent_paths
+    parent_index = 0
+    input_width = graduation_input_width(parent_paths, project_name)
+    input = Tui::InputField.new(
+      placeholder: "",
+      text: display_graduation_destination(parent_paths.first, project_name)
+    )
     ascend_error = nil
 
     loop do
-      render_ascend_dialog(current_name, input.text, input.cursor, ascend_error, projects_dir)
+      render_ascend_dialog(current_name, input, ascend_error,
+                           parent_paths, parent_index, input_width)
 
       ch = read_key
       next unless ch
+
+      parent_delta = graduation_parent_delta(ch)
+      if parent_delta && parent_paths.length > 1
+        parent_index = switch_graduation_parent(
+          input, parent_paths, parent_index, parent_delta, project_name
+        )
+        ascend_error = nil
+        next
+      end
+
       before = input.text
       if input.handle_key(ch)
         ascend_error = nil if input.text != before
@@ -781,48 +792,158 @@ class TrySelector
     @needs_redraw = true
   end
 
-  def render_ascend_dialog(current_name, ascend_buffer, ascend_cursor, ascend_error, projects_dir)
+  def graduation_parent_paths
+    separator = TryCompat.win_platform? ? ';' : ':'
+    parents = TRY_PROJECTS.to_s.split(separator).map do |path|
+      path = path.strip
+      File.expand_path(path) unless path.empty?
+    end.compact.uniq
+    parents.empty? ? [File.expand_path(File.dirname(@base_path))] : parents
+  end
+
+  def graduation_parent_delta(key)
+    case key
+    when "\e[A" then -1  # Up arrow
+    when "\e[B" then 1   # Down arrow
+    end
+  end
+
+  def switch_graduation_parent(input, parent_paths, index, delta, fallback_name)
+    index = (index + delta) % parent_paths.length
+    name = File.basename(input.text)
+    name = fallback_name if name.empty?
+    input.text = display_graduation_destination(parent_paths[index], name)
+    input.cursor = input.text.length
+    index
+  end
+
+  def display_graduation_destination(parent, name)
+    display_graduation_path(File.join(parent, name))
+  end
+
+  def display_graduation_path(path)
+    expanded = File.expand_path(path)
+    home = File.expand_path("~")
+    return "~" if expanded == home
+
+    home_prefix = home.end_with?("/", "\\") ? home : "#{home}#{File::SEPARATOR}"
+    expanded.start_with?(home_prefix) ? "~#{expanded[home.length..]}" : expanded
+  end
+
+  def graduation_input_width(parent_paths, name)
+    parent_paths.map do |parent|
+      path = display_graduation_destination(parent, name)
+      Tui::Metrics.visible_width(path) + 1
+    end.max
+  end
+
+  def render_ascend_dialog(current_name, input, ascend_error,
+                           parent_paths, parent_index, input_width)
     screen = Tui::Screen.new(io: STDERR)
+    multiple_parents = parent_paths.length > 1
+    parent_path = parent_paths[parent_index]
 
     line = screen.header.add_line
       line.center.write(emoji("🚀")).write(Tui::Text.accent("  Graduate try to project"))
     line = screen.header.add_line
-    line.write.write_dim(fill("─")) 
+    line.write.write_dim(fill("─"))
 
     line = screen.body.add_line
       line.write.write(emoji("📁")).write(" #{current_name}")
     screen.body.add_line
 
-    env_hint = TRY_PROJECTS ? "$TRY_PROJECTS" : "parent of $TRY_PATH"
-    line = screen.body.add_line
-      line.center.write_dim("Destination (#{env_hint}: #{projects_dir})")
+    unless multiple_parents
+      env_hint = TRY_PROJECTS.to_s.empty? ? "parent of $TRY_PATH" : "$TRY_PROJECTS"
+      line = screen.body.add_line
+        line.center.write_dim("Destination (#{env_hint}: #{parent_path})")
+    end
 
-    line = screen.body.add_line
-      prefix = "Move to: "
-      line.center.write_dim(prefix)
-      line.center.write(screen.input("", value: ascend_buffer, cursor: ascend_cursor).to_s)
-      input_width = [ascend_buffer.length, ascend_cursor + 1].max
-      prefix_width = Tui::Metrics.visible_width(prefix)
-      max_content = screen.width - 1
-      center_start = (max_content - prefix_width - input_width) / 2
-      line.mark_has_input(center_start + prefix_width)
+    destination_column = render_graduation_input(screen, input, input_width)
 
-    screen.body.add_line
+    if multiple_parents
+      render_graduation_parent_controls(
+        screen, parent_paths, parent_index, destination_column
+      )
+    else
+      screen.body.add_line
+    end
+
     line = screen.body.add_line
       line.center.write_dim("A symlink will be left in the tries directory")
 
     if ascend_error
       screen.body.add_line
       line = screen.body.add_line
-      line.center.write_bold(ascend_error) 
+      line.center.write_bold(ascend_error)
     end
 
     line = screen.footer.add_line
-    line.write.write_dim(fill("─")) 
+    line.write.write_dim(fill("─"))
     line = screen.footer.add_line
-    line.center.write_dim("Enter: Confirm  Esc: Cancel") 
+    line.center.write_dim("Enter: Confirm  Esc: Cancel")
 
     screen.flush
+  end
+
+  def render_graduation_input(screen, input, input_width)
+    line = screen.body.add_line
+    prefix = "Move to: "
+    prefix_width = Tui::Metrics.visible_width(prefix)
+    max_content = screen.width - 1
+    row_start = [(max_content - prefix_width - input_width) / 2, 0].max
+    line.write.write(" " * row_start)
+    line.write.write_dim(prefix)
+
+    rendered_input = screen.input("", value: input.text, cursor: input.cursor).to_s
+    line.write.write(rendered_input)
+    padding = [input_width - Tui::Metrics.visible_width(rendered_input), 0].max
+    line.write.write(" " * padding)
+    line.mark_has_input(row_start + prefix_width)
+    row_start + prefix_width
+  end
+
+  def render_graduation_parent_controls(screen, parent_paths, parent_index, destination_column)
+    render_graduation_parent_list(screen, parent_paths, parent_index, destination_column)
+    screen.body.add_line
+    render_graduation_parent_help(screen)
+    screen.body.add_line
+  end
+
+  def render_graduation_parent_help(screen)
+    line = screen.body.add_line
+    line.center.write_bold("↑↓").write_dim(" select parent, ").write_bold("←→").write_dim(" edit")
+  end
+
+  def render_graduation_parent_list(screen, parent_paths, parent_index, destination_column)
+    display_paths = parent_paths.map { |path| display_graduation_path(path) }
+    common_prefix = graduation_common_path_prefix(display_paths)
+    max_path_width = display_paths.map { |path| Tui::Metrics.visible_width(path) }.max
+    row_start = [destination_column - 2, 0].max
+
+    display_paths.each_with_index do |path, index|
+      selected = index == parent_index
+      background = selected ? Tui::Palette::SELECTED_BG + Tui::Palette::SELECTED_FG : nil
+      line = screen.body.add_line(background)
+      line.write.write(" " * row_start)
+      line.write.write(selected ? Tui::Text.highlight("→ ") + selected_foreground : "  ")
+
+      unique_part = path[common_prefix.length..]
+      shared_part = path[0...common_prefix.length]
+      line.write.write(selected ? shared_part : Tui::Text.dim(shared_part))
+      line.write.write_bold(unique_part)
+      line.write.write(" " * [max_path_width - Tui::Metrics.visible_width(path), 0].max)
+    end
+  end
+
+  def graduation_common_path_prefix(paths)
+    return "" if paths.empty?
+
+    prefix = paths.first
+    paths.drop(1).each do |path|
+      prefix = prefix[0, prefix.length - 1] until path.start_with?(prefix)
+    end
+    separator = [prefix.rindex("/"), prefix.rindex("\\")].compact.max
+    separator ? prefix[0..separator] : ""
   end
 
   def finalize_ascend(entry, ascend_buffer)
@@ -1051,7 +1172,7 @@ if $0 == __FILE__ || TryCompat.compiled_binary?
 
       Environment:
         TRY_PATH          Tries directory (default: ~/src/tries)
-        TRY_PROJECTS      Graduate destination (default: parent of TRY_PATH)
+        TRY_PROJECTS      Graduate parent(s), separated by : (default: parent of TRY_PATH)
 
       Keyboard:
         ↑/↓, Ctrl-P/N     Navigate
