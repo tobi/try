@@ -81,10 +81,13 @@ fi
 
 # Test: Graduate with git worktree uses git worktree move
 WT_DIR=$(mktemp -d)
-mkdir -p "$WT_DIR/2025-06-01-worktree-test"
-echo "gitdir: /tmp/fake-repo/.git/worktrees/worktree-test" > "$WT_DIR/2025-06-01-worktree-test/.git"
+WT_REPO=$(mktemp -d)
+git -C "$WT_REPO" init -q
+git -C "$WT_REPO" -c user.name=Test -c user.email=test@example.com \
+    -c commit.gpgsign=false -c core.hooksPath=/dev/null commit --allow-empty -qm initial
+git -C "$WT_REPO" worktree add -q --detach "$WT_DIR/2025-06-01-worktree-test"
 output=$(try_run --path="$WT_DIR" --and-keys='CTRL-G,ENTER' exec 2>/dev/null)
-if echo "$output" | grep -q "git worktree move"; then
+if echo "$output" | grep -q "worktree move"; then
     pass
 else
     fail "Git worktree should use git worktree move" "git worktree move" "$output" "graduate"
@@ -92,7 +95,7 @@ fi
 
 # Test: Regular directory uses plain mv (not git worktree move)
 output=$(try_run --path="$GRAD_DIR" --and-keys='CTRL-G,ENTER' exec 2>/dev/null)
-if echo "$output" | grep -q "git worktree move"; then
+if echo "$output" | grep -q "worktree move"; then
     fail "Non-worktree should use mv, not git worktree move" "plain mv" "$output" "graduate"
 else
     pass
@@ -201,7 +204,7 @@ fi
 REG_DIR=$(mktemp -d)
 mkdir -p "$REG_DIR/2025-06-01-regular-repo/.git/objects"
 output=$(try_run --path="$REG_DIR" --and-keys='CTRL-G,ENTER' exec 2>/dev/null)
-if echo "$output" | grep -q "git worktree move"; then
+if echo "$output" | grep -q "worktree move"; then
     fail "Regular .git directory should use mv, not git worktree move" "plain mv" "$output" "graduate"
 else
     pass
@@ -222,4 +225,4 @@ else
     fail "Should strip YYYY-MM-DD- prefix from various dates" "year-end" "$output" "graduate"
 fi
 
-rm -rf "$GRAD_DIR" "$PROJ_DIR" "$NO_DATE_DIR" "$WT_DIR" "$EDIT_DIR" "$E2E_DIR" "$E2E_DEST" "$REG_DIR" "$MULTI_DIR"
+rm -rf "$GRAD_DIR" "$PROJ_DIR" "$NO_DATE_DIR" "$WT_DIR" "$WT_REPO" "$EDIT_DIR" "$E2E_DIR" "$E2E_DEST" "$REG_DIR" "$MULTI_DIR"

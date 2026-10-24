@@ -81,6 +81,15 @@ Each command is on its own line, chained with `&& \` for readability, with 2-spa
    - Use basename only (not full path)
    - Each on its own line with continuation
 
+   For linked worktrees, remove the directory and Git registration:
+   ```sh
+     test -d 'name' && git -C '/path/to/tries/name' worktree remove --force -- '/path/to/tries/name' && \
+   ```
+   `YES` also confirms deletion of uncommitted and untracked files. Keep named
+   branches, protect locked worktrees, and never fall back to `rm -rf`.
+   Symlinks lose only the link. Submodules and `--separate-git-dir` repositories
+   keep ordinary deletion behavior.
+
 3. **PWD restoration**
    ```sh
     cd '/original/pwd' 2>/dev/null || cd '/path/to/tries'

@@ -1572,23 +1572,34 @@ if $0 == __FILE__ || TryCompat.compiled_binary?
     ["mkdir -p #{q(path)}", "echo #{q("Using git worktree to create this trial from #{src}.")}", worktree_cmd] + script_cd(path)
   end
 
+  def linked_worktree?(path)
+    return false if File.symlink?(path) || !File.file?(File.join(path, '.git'))
+
+    # Submodules and --separate-git-dir checkouts also have a .git file.
+    dirs = `git -C #{q(path)} rev-parse --git-dir --git-common-dir 2>/dev/null`.lines.map(&:strip)
+    dirs.length == 2 && File.expand_path(dirs[0], path) != File.expand_path(dirs[1], path)
+  end
+
   def script_delete(paths, base_path)
     cmds = ["cd #{q(base_path)}"]
-    paths.each { |item| cmds << "test -d #{q(item[:basename])} && rm -rf #{q(item[:basename])}" }
+    paths.each do |item|
+      name = item[:basename]
+      path = File.join(base_path, name)
+      if linked_worktree?(path)
+        cmds << "test -d #{q(name)} && git -C #{q(path)} worktree remove --force -- #{q(path)}"
+      else
+        cmds << "test -d #{q(name)} && rm -rf #{q(name)}"
+      end
+    end
     cmds << "cd #{q(Dir.pwd)} 2>/dev/null || cd #{q(base_path)}"
     cmds
   end
 
   def script_ascend(source, dest, basename, base_path)
     symlink_path = File.join(base_path, basename)
-    # Check if source is a git worktree (has .git file, not directory)
-    git_file = File.join(source, '.git')
-    is_worktree = File.file?(git_file)
-
     cmds = []
-    if is_worktree
-      # Use git worktree move for proper bookkeeping
-      cmds << "git worktree move #{q(source)} #{q(dest)}"
+    if linked_worktree?(source)
+      cmds << "git -C #{q(source)} worktree move -- #{q(source)} #{q(dest)}"
     else
       cmds << "mv #{q(source)} #{q(dest)}"
     end
@@ -1598,10 +1609,16 @@ if $0 == __FILE__ || TryCompat.compiled_binary?
   end
 
   def script_rename(base_path, old_name, new_name)
+    old_path = File.join(base_path, old_name)
     new_path = File.join(base_path, new_name)
+    move_cmd = if linked_worktree?(old_path)
+      "git -C #{q(old_path)} worktree move -- #{q(old_path)} #{q(new_path)}"
+    else
+      "mv #{q(old_name)} #{q(new_name)}"
+    end
     [
       "cd #{q(base_path)}",
-      "mv #{q(old_name)} #{q(new_name)}",
+      move_cmd,
       "echo #{q(new_path)}",
       "cd #{q(new_path)}"
     ] + terminal_rename_commands(new_path)
