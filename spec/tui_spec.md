@@ -307,6 +307,18 @@ Delete is a multi-step batch operation:
 - Must type `YES` to proceed with deletion
 - Any other input cancels
 
+### Rename and delete Git worktrees
+
+- Rename (`Ctrl-R`) and graduate (`Ctrl-G`) use `git -C <source> worktree move`.
+  Update Git's stored path and preserve the branch or detached HEAD.
+- Delete (`Ctrl-D`) uses `git -C <source> worktree remove --force` after `YES`.
+  Remove the directory, uncommitted and untracked files, and Git registration.
+  Keep any named branch.
+- All three share linked worktree detection and work outside the repository.
+  Protect locked worktrees. Never fall back to filesystem operations on Git failure.
+- Other directories and repositories keep ordinary behavior, including submodules
+  and `--separate-git-dir` repositories. Symlink rename/delete affects only the link.
+
 ### Delete Script Output
 
 In exec mode, delete outputs a shell script (like all other actions). The script is evaluated by the shell wrapper, not executed directly by try.
