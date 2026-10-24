@@ -1582,7 +1582,15 @@ if $0 == __FILE__ || TryCompat.compiled_binary?
 
   def script_delete(paths, base_path)
     cmds = ["cd #{q(base_path)}"]
-    paths.each { |item| cmds << "test -d #{q(item[:basename])} && rm -rf #{q(item[:basename])}" }
+    paths.each do |item|
+      name = item[:basename]
+      path = File.join(base_path, name)
+      if linked_worktree?(path)
+        cmds << "test -d #{q(name)} && git -C #{q(path)} worktree remove --force -- #{q(path)}"
+      else
+        cmds << "test -d #{q(name)} && rm -rf #{q(name)}"
+      end
+    end
     cmds << "cd #{q(Dir.pwd)} 2>/dev/null || cd #{q(base_path)}"
     cmds
   end
@@ -1601,10 +1609,16 @@ if $0 == __FILE__ || TryCompat.compiled_binary?
   end
 
   def script_rename(base_path, old_name, new_name)
+    old_path = File.join(base_path, old_name)
     new_path = File.join(base_path, new_name)
+    move_cmd = if linked_worktree?(old_path)
+      "git -C #{q(old_path)} worktree move -- #{q(old_path)} #{q(new_path)}"
+    else
+      "mv #{q(old_name)} #{q(new_name)}"
+    end
     [
       "cd #{q(base_path)}",
-      "mv #{q(old_name)} #{q(new_name)}",
+      move_cmd,
       "echo #{q(new_path)}",
       "cd #{q(new_path)}"
     ] + terminal_rename_commands(new_path)
